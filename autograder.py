@@ -8,6 +8,8 @@ import time
 import os
 
 jacoco_agent = "target/jacocoagent.jar"
+enable_coverage = False
+enable_debug = False
 def score0(s):
     factor = 50
     return math.floor(pow(factor * factor, 1 - abs(s)) / factor) / factor
@@ -45,8 +47,9 @@ def compare_output(output, expected_output):
         return 0
 
 
-def run_command(command, debug=False):
-    if debug:
+def run_command(command):
+    global enable_debug
+    if enable_debug:
         print("Running command: " + command)
     process = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
@@ -54,7 +57,7 @@ def run_command(command, debug=False):
         output, error = process.communicate(input="", timeout=10)
     except subprocess.TimeoutExpired:
         process.kill()
-        if debug:
+        if enable_debug:
             print("Command timed out: " + command )
         return "TIMEOUT"
      # Normalisation des retours à la ligne (Windows, macOS, Linux)
@@ -77,13 +80,14 @@ def filter_tests(tests, implemented_features):
     return filtered_tests
 
 
-def run_feature_tests(tests, path_to_pandora, enable_coverage=False, debug=False):
+def run_feature_tests(tests, path_to_pandora):
+    global jacoco_agent, enable_coverage
     
     for test in tests:
         option = f" {test['option']}" if 'option' in test else ""
         jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec,append=true" if enable_coverage else ""
         command = f"java{jacoco_arg} -Duser.country=US -Duser.language=en -jar {path_to_pandora} -o {test['feature']}{option} {test['file']}"
-        output = run_command(command, debug)
+        output = run_command(command)
         if output == "TIMEOUT":
             test['actual_result'] = 'TIMEOUT'
             test['score'] = 0
@@ -92,7 +96,8 @@ def run_feature_tests(tests, path_to_pandora, enable_coverage=False, debug=False
         test['score'] = compare_output(output, test['result'])
 
 
-def run_full_tests(tests, path_to_pandora, enable_coverage=False, debug=False):
+def run_full_tests(tests, path_to_pandora):
+    global jacoco_agent, enable_coverage
     grouped_tests = {}
     for test in tests:
         key = (test['file'], test.get('option', ''))
@@ -104,7 +109,7 @@ def run_full_tests(tests, path_to_pandora, enable_coverage=False, debug=False):
         option_str = f" {option}" if option else ""
         jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec,append=true" if enable_coverage else ""
         command = f"java{jacoco_arg} -Duser.country=US -Duser.language=en -jar {path_to_pandora}{option_str} {file}"
-        output = run_command(command, debug)
+        output = run_command(command)
         output_lines = output.split('\n')
 
         for test in tests:
@@ -166,14 +171,13 @@ def sum_scores(tests):
 
 
 def main():
+    global jacoco_agent, enable_coverage, enable_debug
 
     test_suite_file = ''
     manifest_file = ''
     path_to_pandora = ''
     output_format = 'md'
     output_path = ''
-    enable_coverage = False
-    enable_debug = False
 
     try:
         opts, args = getopt.getopt(sys.argv[1:], "t:m:f:o:j:cd", ["coverage", "debug"])
@@ -207,14 +211,14 @@ def main():
 
     jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec" if enable_coverage else ""
     command = f"java{jacoco_arg} -jar {path_to_pandora} --version"
-    output = run_command(command, enable_debug)
+    output = run_command(command)
     if enable_debug:
         print(output)
     # For coverage, we need to run at least one command with the jacoco agent if enabled
     if enable_coverage:
         jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec,append=true"
         command = f"java{jacoco_arg} -jar {path_to_pandora} --help" 
-        output = run_command(command, enable_debug)
+        output = run_command(command)
 
     # Read test suite and manifest
     with open(test_suite_file, 'r') as f:
@@ -233,11 +237,11 @@ def main():
     # Run feature tests
     feature_tests = [
         test for test in filtered_tests if test['mode'] == 'feature']
-    run_feature_tests(feature_tests, path_to_pandora, enable_coverage, enable_debug)
+    run_feature_tests(feature_tests, path_to_pandora)
 
     # Run full tests
     full_tests = [test for test in filtered_tests if test['mode'] == 'full']
-    run_full_tests(full_tests, path_to_pandora, enable_coverage, enable_debug)
+    run_full_tests(full_tests, path_to_pandora)
     stopTime = time.time()
 
     # Group tests by milestone and sort by milestone
