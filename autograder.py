@@ -80,13 +80,48 @@ def filter_tests(tests, implemented_features):
     return filtered_tests
 
 
-def run_feature_tests(tests, path_to_pandora):
+def generate_command(path_to_pandora, file=None, options=None, append_coverage=True):
+    """
+    Generate a Java command for running tests or special operations.
+    
+    Args:
+        path_to_pandora: Path to the Pandora JAR file
+        file: File argument (optional) - test file to be appended to command
+        options: List of options (optional) - can include flags like -o, --version, --help, etc.
+        append_coverage: Whether to append=true to jacoco agent (default: True)
+    
+    Returns:
+        The generated command string
+    """
     global jacoco_agent, enable_coverage
     
+    # Build jacoco argument if coverage is enabled
+    if enable_coverage:
+        append_str = ",append=true" if append_coverage else ""
+        jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec{append_str}"
+    else:
+        jacoco_arg = ""
+    
+    # Java options are always included
+    java_options = " -Duser.country=US -Duser.language=en"
+    
+    # Build options string from array
+    options_str = " " + " ".join(options) if options else ""
+    
+    # Build file string
+    file_str = f" {file}" if file else ""
+    
+    command = f"java{jacoco_arg}{java_options} -jar {path_to_pandora}{options_str}{file_str}"
+    
+    return command
+
+
+def run_feature_tests(tests, path_to_pandora):
     for test in tests:
-        option = f" {test['option']}" if 'option' in test else ""
-        jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec,append=true" if enable_coverage else ""
-        command = f"java{jacoco_arg} -Duser.country=US -Duser.language=en -jar {path_to_pandora} -o {test['feature']}{option} {test['file']}"
+        options = ["-o", test['feature']]
+        if 'option' in test and test['option']:
+            options.append(test['option'])
+        command = generate_command(path_to_pandora, file=test['file'], options=options)
         output = run_command(command)
         if output == "TIMEOUT":
             test['actual_result'] = 'TIMEOUT'
@@ -97,7 +132,6 @@ def run_feature_tests(tests, path_to_pandora):
 
 
 def run_full_tests(tests, path_to_pandora):
-    global jacoco_agent, enable_coverage
     grouped_tests = {}
     for test in tests:
         key = (test['file'], test.get('option', ''))
@@ -106,9 +140,8 @@ def run_full_tests(tests, path_to_pandora):
         grouped_tests[key].append(test)
 
     for (file, option), tests in grouped_tests.items():
-        option_str = f" {option}" if option else ""
-        jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec,append=true" if enable_coverage else ""
-        command = f"java{jacoco_arg} -Duser.country=US -Duser.language=en -jar {path_to_pandora}{option_str} {file}"
+        options = option.split() if option else None
+        command = generate_command(path_to_pandora, file=file, options=options)
         output = run_command(command)
         output_lines = output.split('\n')
 
@@ -209,15 +242,13 @@ def main():
 
     path_to_pandora = args[0]
 
-    jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec" if enable_coverage else ""
-    command = f"java{jacoco_arg} -jar {path_to_pandora} --version"
+    command = generate_command(path_to_pandora, options=["--version"], append_coverage=False)
     output = run_command(command)
     if enable_debug:
         print(output)
     # For coverage, we need to run at least one command with the jacoco agent if enabled
     if enable_coverage:
-        jacoco_arg = f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec,append=true"
-        command = f"java{jacoco_arg} -jar {path_to_pandora} --help" 
+        command = generate_command(path_to_pandora, options=["--help"], append_coverage=True)
         output = run_command(command)
 
     # Read test suite and manifest
