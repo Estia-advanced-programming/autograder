@@ -187,16 +187,24 @@ def sort_tests_by_milestone(tests):
     return sorted(tests, key=lambda x: x["milestone"])
 
 
+colors = {"🔴": "red", "🟢": "green", "🟡": "yellow"}
+
+
+def pass_badge(score):
+    if score >= 0.9:
+        return "🟢"
+    elif score >= 0.8:
+        return "🟡"
+    else:
+        return "🔴"
+
+
 def generate_markdown_table(tests):
-    markdown = (
-        "| id | mode |feature | file | expected result | actual result | score |\n"
-    )
-    markdown += (
-        "|----|------|---------|------|----------------|---------------|-------|\n"
-    )
+    markdown = "| id | mode |feature | file | expected result | actual result | Pass | score |\n"
+    markdown += "|----|------|---------|------|----------------|---------------|------| -------|\n"
     for test in tests:
         markdown += f"| {test['id']} | {test['mode']} | {test['feature']} | {test['file']} | {
-            test['result']} | {test['actual_result']} | {test.get('score', '')} |\n"
+            test['result']} | {test['actual_result']} | {pass_badge(test.get('score', 0))} | {test.get('score', '')} |\n"
     return markdown
 
 
