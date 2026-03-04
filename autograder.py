@@ -208,6 +208,14 @@ def generate_markdown_table(tests):
     return markdown
 
 
+def generate_markdown_feature_table(features_score):
+    markdown = "| Feature | Pass | Score |\n"
+    markdown += "|---------|------|-------|\n"
+    for feature, score in features_score.items():
+        markdown += f"| {feature} | {pass_badge(score)} | {score:.2f} |\n"
+    return markdown
+
+
 def sum_scores(tests):
     total_score = 0
     count = 0
@@ -340,6 +348,11 @@ def main():
             print(json.dumps(output_data, indent=4))
     elif output_format == "md":
         output_text = ""
+
+        markdown_feature_table = generate_markdown_feature_table(features_score)
+        output_text += "Feature Scores:\n"
+        output_text += markdown_feature_table + "\n\n"
+
         for markdown_table in markdown_tables:
             output_text += markdown_table + "\n\n"
         output_text += "Milestone Scores:\n"
