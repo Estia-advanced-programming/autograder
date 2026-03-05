@@ -170,6 +170,27 @@ def test_display_name(test):
 # ─── Filtering ──────────────────────────────────────────────────────────────
 
 
+def validate_and_generate_test_ids(tests):
+    """Ensure all tests have IDs; generate sequential IDs for missing ones."""
+    # Find max existing ID
+    max_id = 0
+    for test in tests:
+        if "id" in test:
+            try:
+                test_id = int(test["id"])
+                if test_id > max_id:
+                    max_id = test_id
+            except (ValueError, TypeError):
+                pass
+    
+    # Generate IDs for tests missing them
+    next_id = max_id + 1
+    for test in tests:
+        if "id" not in test:
+            test["id"] = next_id
+            next_id += 1
+
+
 def filter_tests(tests, implemented_features):
     """Keep only tests whose category appears in the manifest features list."""
     filtered = []
@@ -426,6 +447,8 @@ def check_inputs(test_suite_path, manifest_path, jar_path, test_dir=None):
             errors.append("Test suite must be a JSON array.")
         else:
             for i, t in enumerate(tests):
+                if "id" not in t:
+                    errors.append(f"Test #{i}: missing 'id' field.")
                 if "file" not in t:
                     errors.append(f"Test #{i}: missing 'file' field.")
                 elif not os.path.isfile(resolve_path(t["file"], test_dir)):
@@ -572,6 +595,9 @@ def main():
         test_suite = json.load(f)
     with open(manifest_path, "r") as f:
         manifest = json.load(f)
+
+    # ── Validate and generate test IDs ────────────────────────────────
+    validate_and_generate_test_ids(test_suite)
 
     implemented_features = manifest.get("features", [])
     manifest_version_raw = manifest.get("version", "0.0.0")
