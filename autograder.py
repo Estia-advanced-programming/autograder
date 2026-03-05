@@ -40,11 +40,13 @@ def levenshtein_normalised(s1, s2):
     for i, c1 in enumerate(s1):
         current_row = [i + 1]
         for j, c2 in enumerate(s2):
-            current_row.append(min(
-                previous_row[j + 1] + 1,    # insertion
-                current_row[j] + 1,          # deletion
-                previous_row[j] + (c1 != c2) # substitution
-            ))
+            current_row.append(
+                min(
+                    previous_row[j + 1] + 1,  # insertion
+                    current_row[j] + 1,  # deletion
+                    previous_row[j] + (c1 != c2),  # substitution
+                )
+            )
         previous_row = current_row
     return previous_row[-1] / len(s1)
 
@@ -63,6 +65,7 @@ def compare_output(actual, expected):
 
 # ─── Output normalisation ──────────────────────────────────────────────────
 
+
 def normalise_output(raw_bytes):
     """Decode and normalise subprocess stdout."""
     text = raw_bytes.decode(errors="replace")
@@ -73,6 +76,7 @@ def normalise_output(raw_bytes):
 
 
 # ─── Command execution ─────────────────────────────────────────────────────
+
 
 def run_command(command, timeout, debug):
     """Run *command* in a shell, return normalised stdout or 'TIMEOUT'."""
@@ -94,15 +98,21 @@ def run_command(command, timeout, debug):
 
 # ─── Java command builder ──────────────────────────────────────────────────
 
-def build_java_command(jar_path, *, file=None, options=None,
-                       coverage=False, jacoco_path=None, jacoco_append=True):
+
+def build_java_command(
+    jar_path,
+    *,
+    file=None,
+    options=None,
+    coverage=False,
+    jacoco_path=None,
+    jacoco_append=True,
+):
     """Build a ``java -jar`` invocation string."""
     parts = ["java"]
     if coverage and jacoco_path:
         append = ",append=true" if jacoco_append else ""
-        parts.append(
-            f"-javaagent:{jacoco_path}=destfile=target/jacoco.exec{append}"
-        )
+        parts.append(f"-javaagent:{jacoco_path}=destfile=target/jacoco.exec{append}")
     parts += ["-Duser.country=US", "-Duser.language=en", "-jar", jar_path]
     if options:
         parts.extend(options)
@@ -112,6 +122,7 @@ def build_java_command(jar_path, *, file=None, options=None,
 
 
 # ─── Version utilities ──────────────────────────────────────────────────────
+
 
 def parse_version(version_string):
     """Strip leading 'v' and split into a comparable tuple of ints."""
@@ -127,6 +138,7 @@ def format_version(version_tuple):
 
 
 # ─── Test category helpers ──────────────────────────────────────────────────
+
 
 def test_category(test):
     """Return the manifest key that must be present for this test to run."""
@@ -157,6 +169,7 @@ def test_display_name(test):
 
 # ─── Filtering ──────────────────────────────────────────────────────────────
 
+
 def filter_tests(tests, implemented_features):
     """Keep only tests whose category appears in the manifest features list."""
     filtered = []
@@ -172,6 +185,7 @@ def filter_tests(tests, implemented_features):
 
 # ─── Test execution ─────────────────────────────────────────────────────────
 
+
 def _build_feature_command(test, jar_path, cfg):
     """Build the command for a single feature-mode test."""
     options = []
@@ -182,9 +196,12 @@ def _build_feature_command(test, jar_path, cfg):
     if test.get("option"):
         options += test["option"].split()
     return build_java_command(
-        jar_path, file=test["file"], options=options or None,
-        coverage=cfg["coverage"], jacoco_path=cfg["jacoco"],
-        jacoco_append=True
+        jar_path,
+        file=test["file"],
+        options=options or None,
+        coverage=cfg["coverage"],
+        jacoco_path=cfg["jacoco"],
+        jacoco_append=True,
     )
 
 
@@ -211,9 +228,12 @@ def run_full_tests(tests, jar_path, cfg):
     for (file, option), group in groups.items():
         options = option.split() if option else None
         command = build_java_command(
-            jar_path, file=file, options=options,
-            coverage=cfg["coverage"], jacoco_path=cfg["jacoco"],
-            jacoco_append=True
+            jar_path,
+            file=file,
+            options=options,
+            coverage=cfg["coverage"],
+            jacoco_path=cfg["jacoco"],
+            jacoco_append=True,
         )
         output = run_command(command, cfg["timeout"], cfg["debug"])
         output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
@@ -224,7 +244,9 @@ def run_full_tests(tests, jar_path, cfg):
                 test["score"] = 0.0
                 continue
 
-            lookup_key = test.get("feature") or test.get("metadata") or test.get("parameter", "")
+            lookup_key = (
+                test.get("feature") or test.get("metadata") or test.get("parameter", "")
+            )
             test["actual_result"] = f"key {lookup_key}: not found"
             test["score"] = 0.0
 
@@ -238,6 +260,7 @@ def run_full_tests(tests, jar_path, cfg):
 
 
 # ─── Score aggregation ──────────────────────────────────────────────────────
+
 
 def average_score(tests):
     scores = [t["score"] for t in tests if "score" in t]
@@ -271,6 +294,7 @@ def group_by_milestone(tests):
 
 # ─── Pass badge ─────────────────────────────────────────────────────────────
 
+
 def badge(score):
     if score >= 0.9:
         return "🟢"
@@ -281,6 +305,7 @@ def badge(score):
 
 # ─── Report generators ─────────────────────────────────────────────────────
 
+
 def report_summary(feature_scores):
     """One line per feature with badge."""
     lines = []
@@ -290,8 +315,7 @@ def report_summary(feature_scores):
     return "\n".join(lines)
 
 
-def report_markdown(feature_scores, tests, milestone_scores, total_score,
-                    version_info):
+def report_markdown(feature_scores, tests, milestone_scores, total_score, version_info):
     """Full Markdown report."""
     lines = []
     # Version
@@ -321,12 +345,8 @@ def report_markdown(feature_scores, tests, milestone_scores, total_score,
         ms_tests = grouped[ms]
         lines.append(f"## Milestone {ms}")
         lines.append("")
-        lines.append(
-            "| id | mode | target | file | expected | actual | Pass | score |"
-        )
-        lines.append(
-            "|----|------|--------|------|----------|--------|------|-------|"
-        )
+        lines.append("| id | mode | target | file | expected | actual | Pass | score |")
+        lines.append("|----|------|--------|------|----------|--------|------|-------|")
         for t in ms_tests:
             lines.append(
                 f"| {t['id']} | {t.get('mode','full')} | {test_display_name(t)} "
@@ -346,8 +366,15 @@ def report_markdown(feature_scores, tests, milestone_scores, total_score,
     return "\n".join(lines)
 
 
-def report_json(feature_scores, tests, milestone_scores, total_score,
-                implemented_features, version_info, elapsed):
+def report_json(
+    feature_scores,
+    tests,
+    milestone_scores,
+    total_score,
+    implemented_features,
+    version_info,
+    elapsed,
+):
     """Build the JSON output dict."""
     data = {
         "version": version_info["reported"],
@@ -368,6 +395,7 @@ def report_json(feature_scores, tests, milestone_scores, total_score,
 
 
 # ─── Input validation (--check) ────────────────────────────────────────────
+
 
 def check_inputs(test_suite_path, manifest_path, jar_path):
     """Validate inputs. Return list of error strings (empty = OK)."""
@@ -417,6 +445,7 @@ def check_inputs(test_suite_path, manifest_path, jar_path):
 
 # ─── CLI ────────────────────────────────────────────────────────────────────
 
+
 def build_parser():
     p = argparse.ArgumentParser(
         description="Autograder for the Pandora flight-recorder project.",
@@ -425,35 +454,67 @@ def build_parser():
     p.add_argument("jar", help="Path to the Pandora JAR file")
 
     # Path options
-    p.add_argument("-w", "--workdir", default=None,
-                   help="Working directory; relative paths resolved from here")
-    p.add_argument("-t", "--tests", default="./test/testSuite.json",
-                   help="Path to test suite JSON (default: ./test/testSuite.json)")
-    p.add_argument("-m", "--manifest", default="./manifest.json",
-                   help="Path to manifest JSON (default: ./manifest.json)")
-    p.add_argument("-j", "--jacoco", default="target/jacocoagent.jar",
-                   help="Path to JaCoCo agent JAR")
+    p.add_argument(
+        "-w",
+        "--workdir",
+        default=None,
+        help="Working directory; relative paths resolved from here",
+    )
+    p.add_argument(
+        "-t",
+        "--tests",
+        default="./test/testSuite.json",
+        help="Path to test suite JSON (default: ./test/testSuite.json)",
+    )
+    p.add_argument(
+        "-m",
+        "--manifest",
+        default="./manifest.json",
+        help="Path to manifest JSON (default: ./manifest.json)",
+    )
+    p.add_argument(
+        "-j",
+        "--jacoco",
+        default="target/jacocoagent.jar",
+        help="Path to JaCoCo agent JAR",
+    )
 
     # Output options
     output_group = p.add_mutually_exclusive_group()
-    output_group.add_argument("--summary", action="store_true",
-                              help="Compact per-feature badge output")
-    output_group.add_argument("--report", action="store_true",
-                              help="Full Markdown report (default)")
-    p.add_argument("-f", "--format", choices=["json", "md"], default=None,
-                   help="Output format (json or md)")
-    p.add_argument("-o", "--output", default=None,
-                   help="Write output to this file path")
+    output_group.add_argument(
+        "--summary", action="store_true", help="Compact per-feature badge output"
+    )
+    output_group.add_argument(
+        "--report", action="store_true", help="Full Markdown report (default)"
+    )
+    p.add_argument(
+        "-f",
+        "--format",
+        choices=["json", "md"],
+        default=None,
+        help="Output format (json or md)",
+    )
+    p.add_argument(
+        "-o", "--output", default=None, help="Write output to this file path"
+    )
 
     # Execution options
-    p.add_argument("-c", "--coverage", action="store_true",
-                   help="Enable JaCoCo code coverage")
-    p.add_argument("-d", "--debug", action="store_true",
-                   help="Print executed commands to stdout")
-    p.add_argument("-T", "--timeout", type=int, default=10,
-                   help="Per-command timeout in seconds (default: 10)")
-    p.add_argument("--check", action="store_true",
-                   help="Validate inputs without running tests")
+    p.add_argument(
+        "-c", "--coverage", action="store_true", help="Enable JaCoCo code coverage"
+    )
+    p.add_argument(
+        "-d", "--debug", action="store_true", help="Print executed commands to stdout"
+    )
+    p.add_argument(
+        "-T",
+        "--timeout",
+        type=int,
+        default=10,
+        help="Per-command timeout in seconds (default: 10)",
+    )
+    p.add_argument(
+        "--check", action="store_true", help="Validate inputs without running tests"
+    )
 
     return p
 
@@ -507,8 +568,11 @@ def main():
 
     # ── Get Pandora version ───────────────────────────────────────────
     version_cmd = build_java_command(
-        jar_path, options=["--version"],
-        coverage=False, jacoco_path=jacoco_path, jacoco_append=False
+        jar_path,
+        options=["--version"],
+        coverage=False,
+        jacoco_path=jacoco_path,
+        jacoco_append=False,
     )
     pandora_version_raw = run_command(version_cmd, cfg["timeout"], cfg["debug"])
     if cfg["debug"]:
@@ -517,8 +581,11 @@ def main():
     # Initialise coverage file if needed
     if cfg["coverage"]:
         help_cmd = build_java_command(
-            jar_path, options=["--help"],
-            coverage=True, jacoco_path=jacoco_path, jacoco_append=False
+            jar_path,
+            options=["--help"],
+            coverage=True,
+            jacoco_path=jacoco_path,
+            jacoco_append=False,
         )
         run_command(help_cmd, cfg["timeout"], cfg["debug"])
 
@@ -569,14 +636,18 @@ def main():
         output_text = report_summary(feature_scores)
     elif fmt == "json":
         data = report_json(
-            feature_scores, filtered, milestone_scores, total_score,
-            implemented_features, version_info, elapsed
+            feature_scores,
+            filtered,
+            milestone_scores,
+            total_score,
+            implemented_features,
+            version_info,
+            elapsed,
         )
         output_text = json.dumps(data, indent=2, default=str)
     else:
         output_text = report_markdown(
-            feature_scores, filtered, milestone_scores, total_score,
-            version_info
+            feature_scores, filtered, milestone_scores, total_score, version_info
         )
 
     # ── Write or print ────────────────────────────────────────────────
