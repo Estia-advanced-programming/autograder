@@ -115,11 +115,16 @@ A matrix where rows are features and columns are groups:
 ```
                   group1  group2  group3  group4
 altitude_max        🟢      🟡      🔴      🟢
-speed_avg           🟢      🟢      🟢      🟡
+speed_avg           🟢      🟢      ⚪️      🟡
 metadata            🔴      🟢      🔴      🔴
 parameter           🟢      🟢      🟢      🟢
 imperial            🟡      🔴      🟢      🟢
 ```
+
+A 🟢 here means the feature is correctly implemented (score ≥ 0.9)
+A 🟡 means the feature is partially implemented (score between 0.5 and 0.9)
+A 🔴 here means the feature is not correctly implemented 
+A ⚪️ means the feature is not declared in the manifest (not attempted).
 
 This is the **reference evaluation** — it shows at a glance which features each group has successfully implemented.
 
@@ -132,11 +137,12 @@ Same format, but shows which of each group's tests are correct (pass against ref
 ```
                   group1  group2  group3  group4
 altitude_max        🟢      🟢      🔴      🟢
-speed_avg           🟢      🔴      🟢      🟢
+speed_avg           🟢      🔴      ⚪️      ⚪️
 ...
 ```
 
 A 🔴 here means the group's tests for that feature contain errors (bad expected values).
+A ⚪️ means the group has no tests for that feature.
 
 ### 4.3 Cross-Testing Agreement Matrix
 
