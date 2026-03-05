@@ -41,6 +41,32 @@ def find_autograder():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "autograder.py")
 
 
+def check_test_suite(
+    test_suite, manifest, jar, test_dir=None, pandora_dir=None, timeout=10, debug=False
+):
+    """Run autograder --check to validate test suite inputs.
+
+    Returns True if all checks pass, False otherwise.
+    """
+    autograder = find_autograder()
+    cmd = [sys.executable, autograder, "--check", "-t", test_suite, "-m", manifest]
+    if test_dir:
+        cmd += ["--test-dir", test_dir]
+    if pandora_dir:
+        cmd += ["-P", pandora_dir]
+    if timeout != 10:
+        cmd += ["-T", str(timeout)]
+    if debug:
+        cmd.append("-d")
+    cmd.append(jar)
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
 def run_autograder(
     jar,
     test_suite,
@@ -534,16 +560,41 @@ def main():
     for gname, gpath in groups:
         jar = group_jar(gpath)
         ts = group_test_suite(gpath)
+        validated_ts = group_validated_test_suite(gpath)
         manifest_path = group_manifest(gpath)
-        if not (
-            os.path.isfile(jar) and os.path.isfile(ts) and os.path.isfile(manifest_path)
-        ):
+        if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
             continue
 
-        print(f"  [{gname}] self-evaluation...")
+        # Check if we should use original or validated test suite
+        use_ts = ts
+        if os.path.isfile(ts):
+            # Check if original test suite is valid
+            if check_test_suite(
+                ts,
+                manifest_path,
+                jar,
+                test_dir=gpath,
+                timeout=cfg["timeout"],
+                debug=cfg["debug"],
+            ):
+                print(f"  [{gname}] self-evaluation (using original tests)...")
+                use_ts = ts
+            else:
+                print(
+                    f"  [{gname}] original test suite invalid, using validated tests..."
+                )
+                use_ts = validated_ts
+        else:
+            print(f"  [{gname}] no original test suite, using validated tests...")
+            use_ts = validated_ts
+
+        if not os.path.isfile(use_ts):
+            print(f"  [{gname}] SKIP: no valid test suite available")
+            continue
+
         data, err = run_autograder(
             jar=jar,
-            test_suite=ts,
+            test_suite=use_ts,
             manifest=manifest_path,
             test_dir=gpath,
             timeout=cfg["timeout"],

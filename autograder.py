@@ -182,7 +182,7 @@ def validate_and_generate_test_ids(tests):
                     max_id = test_id
             except (ValueError, TypeError):
                 pass
-    
+
     # Generate IDs for tests missing them
     next_id = max_id + 1
     for test in tests:
@@ -484,13 +484,13 @@ def build_parser():
         "--pandora-workdir",
         default=None,
         help="Project root for Pandora artifacts (manifest, JAR, JaCoCo); "
-             "relative paths for -m, -j, and the JAR argument resolve from here",
+        "relative paths for -m, -j, and the JAR argument resolve from here",
     )
     p.add_argument(
         "--test-dir",
         default=None,
         help="Root for test data; -t resolves from here and test file "
-             "paths inside the test suite are prefixed with this directory",
+        "paths inside the test suite are prefixed with this directory",
     )
     p.add_argument(
         "-t",
@@ -591,10 +591,27 @@ def main():
         sys.exit(0)
 
     # ── Load inputs ───────────────────────────────────────────────────
-    with open(test_suite_path, "r") as f:
-        test_suite = json.load(f)
-    with open(manifest_path, "r") as f:
-        manifest = json.load(f)
+    try:
+        with open(test_suite_path, "r") as f:
+            test_suite = json.load(f)
+    except FileNotFoundError:
+        print(f"ERROR: Test suite file not found: {test_suite_path}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Test suite is not valid JSON: {e}")
+        print(f"       File: {test_suite_path}")
+        sys.exit(1)
+
+    try:
+        with open(manifest_path, "r") as f:
+            manifest = json.load(f)
+    except FileNotFoundError:
+        print(f"ERROR: Manifest file not found: {manifest_path}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Manifest is not valid JSON: {e}")
+        print(f"       File: {manifest_path}")
+        sys.exit(1)
 
     # ── Validate and generate test IDs ────────────────────────────────
     validate_and_generate_test_ids(test_suite)
