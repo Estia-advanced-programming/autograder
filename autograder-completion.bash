@@ -32,10 +32,10 @@ _autograder_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    opts="-t --tests -m --manifest -f --format -o --output -w --workdir -j --jacoco -c --coverage -d --debug -T --timeout --summary --report --check --help"
+    opts="-t --tests -m --manifest -f --format -o --output -P --pandora-workdir --test-dir -j --jacoco -c --coverage -d --debug -T --timeout --summary --report --check --help"
 
     case "${prev}" in
-        -t|--tests|-m|--manifest|-j|--jacoco|-o|--output|-w|--workdir)
+        -t|--tests|-m|--manifest|-j|--jacoco|-o|--output|-P|--pandora-workdir|--test-dir)
             _autograder_complete_path "${cur}"
             return 0
             ;;

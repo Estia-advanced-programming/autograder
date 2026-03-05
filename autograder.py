@@ -195,9 +195,10 @@ def _build_feature_command(test, jar_path, cfg):
         options += ["-m", test["metadata"]]
     if test.get("option"):
         options += test["option"].split()
+    file_path = resolve_path(test["file"], cfg.get("test_dir"))
     return build_java_command(
         jar_path,
-        file=test["file"],
+        file=file_path,
         options=options or None,
         coverage=cfg["coverage"],
         jacoco_path=cfg["jacoco"],
@@ -227,9 +228,10 @@ def run_full_tests(tests, jar_path, cfg):
 
     for (file, option), group in groups.items():
         options = option.split() if option else None
+        file_path = resolve_path(file, cfg.get("test_dir"))
         command = build_java_command(
             jar_path,
-            file=file,
+            file=file_path,
             options=options,
             coverage=cfg["coverage"],
             jacoco_path=cfg["jacoco"],
@@ -397,7 +399,7 @@ def report_json(
 # ─── Input validation (--check) ────────────────────────────────────────────
 
 
-def check_inputs(test_suite_path, manifest_path, jar_path):
+def check_inputs(test_suite_path, manifest_path, jar_path, test_dir=None):
     """Validate inputs. Return list of error strings (empty = OK)."""
     errors = []
 
@@ -426,7 +428,7 @@ def check_inputs(test_suite_path, manifest_path, jar_path):
             for i, t in enumerate(tests):
                 if "file" not in t:
                     errors.append(f"Test #{i}: missing 'file' field.")
-                elif not os.path.isfile(t["file"]):
+                elif not os.path.isfile(resolve_path(t["file"], test_dir)):
                     errors.append(f"Test #{i}: file not found: {t['file']}")
                 if "result" not in t:
                     errors.append(f"Test #{i}: missing 'result' field.")
@@ -455,10 +457,17 @@ def build_parser():
 
     # Path options
     p.add_argument(
-        "-w",
-        "--workdir",
+        "-P",
+        "--pandora-workdir",
         default=None,
-        help="Working directory; relative paths resolved from here",
+        help="Project root for Pandora artifacts (manifest, JAR, JaCoCo); "
+             "relative paths for -m, -j, and the JAR argument resolve from here",
+    )
+    p.add_argument(
+        "--test-dir",
+        default=None,
+        help="Root for test data; -t resolves from here and test file "
+             "paths inside the test suite are prefixed with this directory",
     )
     p.add_argument(
         "-t",
@@ -530,26 +539,27 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    # Resolve paths relative to workdir if provided
-    workdir = args.workdir
-    jar_path = resolve_path(args.jar, workdir)
-    test_suite_path = resolve_path(args.tests, workdir)
-    manifest_path = resolve_path(args.manifest, workdir)
-    jacoco_path = resolve_path(args.jacoco, workdir)
+    # -P resolves project artifacts: JAR, manifest, jacoco
+    pandora_dir = args.pandora_workdir
+    jar_path = resolve_path(args.jar, pandora_dir)
+    manifest_path = resolve_path(args.manifest, pandora_dir)
+    jacoco_path = resolve_path(args.jacoco, pandora_dir)
 
-    if workdir:
-        os.chdir(workdir)
+    # --test-dir resolves test suite path
+    test_dir = args.test_dir
+    test_suite_path = resolve_path(args.tests, test_dir)
 
     cfg = {
         "coverage": args.coverage,
         "jacoco": jacoco_path,
         "debug": args.debug,
         "timeout": args.timeout,
+        "test_dir": test_dir,
     }
 
     # ── --check mode ──────────────────────────────────────────────────
     if args.check:
-        errors = check_inputs(test_suite_path, manifest_path, jar_path)
+        errors = check_inputs(test_suite_path, manifest_path, jar_path, test_dir)
         if errors:
             for e in errors:
                 print(f"ERROR: {e}")
