@@ -1,372 +1,603 @@
+#!/usr/bin/env python3
+"""
+Autograder for Pandora — a flight-recorder data analysis Java project.
+
+Runs a JSON test suite against a student's Pandora JAR, compares outputs
+to expected results, and produces grading reports (summary, markdown, JSON).
+
+Usage:
+    python autograder.py [options] <path_to_pandora_jar>
+
+See --help for full option list.
+"""
+
+import argparse
 import json
 import math
+import os
 import subprocess
 import sys
-import getopt
-import sys
 import time
-import os
 
-jacoco_agent = "target/jacocoagent.jar"
-enable_coverage = False
-enable_debug = False
+# ─── Scoring helpers ────────────────────────────────────────────────────────
 
-
-def score0(s):
-    factor = 50
-    return math.floor(pow(factor * factor, 1 - abs(s)) / factor) / factor
+SCORE_FACTOR = 50
 
 
-def levenshtein(s1, s2):
+def numeric_score(difference):
+    """Exponential-decay score for numeric comparison. 1.0 on exact match."""
+    f = SCORE_FACTOR
+    return math.floor(pow(f * f, 1 - abs(difference)) / f) / f
+
+
+def levenshtein_normalised(s1, s2):
+    """Return normalised Levenshtein distance in [0, 1]. 0 = identical."""
     if len(s1) < len(s2):
-        return levenshtein(s2, s1)
+        return levenshtein_normalised(s2, s1)
     if len(s2) == 0:
         return 1.0
-    previous_row = range(len(s2) + 1)
+    previous_row = list(range(len(s2) + 1))
     for i, c1 in enumerate(s1):
         current_row = [i + 1]
         for j, c2 in enumerate(s2):
-            insertions = previous_row[j + 1] + 1
-            deletions = current_row[j] + 1
-            substitutions = previous_row[j] + (c1 != c2)
-            current_row.append(min(insertions, deletions, substitutions))
+            current_row.append(min(
+                previous_row[j + 1] + 1,    # insertion
+                current_row[j] + 1,          # deletion
+                previous_row[j] + (c1 != c2) # substitution
+            ))
         previous_row = current_row
-        normalized = previous_row[-1] / len(s1)
-    return normalized
+    return previous_row[-1] / len(s1)
 
 
-def compare_output(output, expected_output):
-    # regexp the output /\s*(?:[^:]*:)?\s*(.*)/
-    if isinstance(expected_output, int) or isinstance(expected_output, float):
+def compare_output(actual, expected):
+    """Score an actual output string against an expected value (0.0–1.0)."""
+    if isinstance(expected, (int, float)):
         try:
-            actual_output = float(output)
-            return score0(abs(actual_output - expected_output))
-        except ValueError:
-            return 0
-    elif isinstance(expected_output, str):
-        return 1 - levenshtein(output, expected_output)
-    else:
-        return 0
+            return numeric_score(abs(float(actual) - expected))
+        except (ValueError, TypeError):
+            return 0.0
+    if isinstance(expected, str):
+        return 1.0 - levenshtein_normalised(actual, expected)
+    return 0.0
 
 
-def run_command(command):
-    global enable_debug
-    if enable_debug:
-        print("Running command: " + command)
-    process = subprocess.Popen(
+# ─── Output normalisation ──────────────────────────────────────────────────
+
+def normalise_output(raw_bytes):
+    """Decode and normalise subprocess stdout."""
+    text = raw_bytes.decode(errors="replace")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\t", "    ")
+    text = text.replace("\n", os.linesep)
+    return text.strip()
+
+
+# ─── Command execution ─────────────────────────────────────────────────────
+
+def run_command(command, timeout, debug):
+    """Run *command* in a shell, return normalised stdout or 'TIMEOUT'."""
+    if debug:
+        print(f"[debug] {command}")
+    proc = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
     )
     try:
-        output, error = process.communicate(input="", timeout=10)
+        stdout, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
-        if enable_debug:
-            print("Command timed out: " + command)
+        proc.kill()
+        proc.communicate()
+        if debug:
+            print("[debug] command timed out")
         return "TIMEOUT"
-    # Normalisation des retours à la ligne (Windows, macOS, Linux)
-    output = output.decode(errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    return normalise_output(stdout)
 
-    # Normalisation des tabulations (`\t`)
-    output = output.replace("\t", "    ")  # Convertit tabulation en 4 espaces
 
-    # Reformate pour s'adapter au système d'exploitation courant
-    return output.replace("\n", os.linesep).strip()
+# ─── Java command builder ──────────────────────────────────────────────────
 
+def build_java_command(jar_path, *, file=None, options=None,
+                       coverage=False, jacoco_path=None, jacoco_append=True):
+    """Build a ``java -jar`` invocation string."""
+    parts = ["java"]
+    if coverage and jacoco_path:
+        append = ",append=true" if jacoco_append else ""
+        parts.append(
+            f"-javaagent:{jacoco_path}=destfile=target/jacoco.exec{append}"
+        )
+    parts += ["-Duser.country=US", "-Duser.language=en", "-jar", jar_path]
+    if options:
+        parts.extend(options)
+    if file:
+        parts.append(file)
+    return " ".join(parts)
+
+
+# ─── Version utilities ──────────────────────────────────────────────────────
+
+def parse_version(version_string):
+    """Strip leading 'v' and split into a comparable tuple of ints."""
+    v = version_string.strip().lstrip("v")
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except (ValueError, AttributeError):
+        return (0,)
+
+
+def format_version(version_tuple):
+    return ".".join(str(x) for x in version_tuple)
+
+
+# ─── Test category helpers ──────────────────────────────────────────────────
+
+def test_category(test):
+    """Return the manifest key that must be present for this test to run."""
+    if test.get("metadata"):
+        return "metadata"
+    if test.get("parameter"):
+        return "parameter"
+    return test.get("feature", "")
+
+
+def test_aggregation_key(test):
+    """Return the key under which this test's score is aggregated in feature scores."""
+    if test.get("metadata"):
+        return "metadata"
+    if test.get("parameter"):
+        return test["parameter"]
+    return test.get("feature", "unknown")
+
+
+def test_display_name(test):
+    """Human-readable label for the test target."""
+    if test.get("metadata"):
+        return f"metadata:{test['metadata']}"
+    if test.get("parameter"):
+        return test["parameter"]
+    return test.get("feature", "?")
+
+
+# ─── Filtering ──────────────────────────────────────────────────────────────
 
 def filter_tests(tests, implemented_features):
-    filtered_tests = []
+    """Keep only tests whose category appears in the manifest features list."""
+    filtered = []
+    features_set = set(implemented_features)
     for test in tests:
-        if test["feature"] in implemented_features:
+        cat = test_category(test)
+        if cat in features_set:
             test["actual_result"] = ""
-            filtered_tests.append(test)
-    return filtered_tests
+            test["score"] = 0.0
+            filtered.append(test)
+    return filtered
 
 
-def generate_command(path_to_pandora, file=None, options=None, append_coverage=True):
-    """
-    Generate a Java command for running tests or special operations.
+# ─── Test execution ─────────────────────────────────────────────────────────
 
-    Args:
-        path_to_pandora: Path to the Pandora JAR file
-        file: File argument (optional) - test file to be appended to command
-        options: List of options (optional) - can include flags like -o, --version, --help, etc.
-        append_coverage: Whether to append=true to jacoco agent (default: True)
-
-    Returns:
-        The generated command string
-    """
-    global jacoco_agent, enable_coverage
-
-    # Build jacoco argument if coverage is enabled
-    if enable_coverage:
-        append_str = ",append=true" if append_coverage else ""
-        jacoco_arg = (
-            f" -javaagent:{jacoco_agent}=destfile=target/jacoco.exec{append_str}"
-        )
-    else:
-        jacoco_arg = ""
-
-    # Java options are always included
-    java_options = " -Duser.country=US -Duser.language=en"
-
-    # Build options string from array
-    options_str = " " + " ".join(options) if options else ""
-
-    # Build file string
-    file_str = f" {file}" if file else ""
-
-    command = (
-        f"java{jacoco_arg}{java_options} -jar {path_to_pandora}{options_str}{file_str}"
+def _build_feature_command(test, jar_path, cfg):
+    """Build the command for a single feature-mode test."""
+    options = []
+    if test.get("feature") and not test.get("metadata") and not test.get("parameter"):
+        options += ["-o", test["feature"]]
+    if test.get("metadata"):
+        options += ["-m", test["metadata"]]
+    if test.get("option"):
+        options += test["option"].split()
+    return build_java_command(
+        jar_path, file=test["file"], options=options or None,
+        coverage=cfg["coverage"], jacoco_path=cfg["jacoco"],
+        jacoco_append=True
     )
 
-    return command
 
-
-def run_feature_tests(tests, path_to_pandora):
+def run_feature_tests(tests, jar_path, cfg):
+    """Execute each feature-mode test individually."""
     for test in tests:
-        options = ["-o", test["feature"]]
-        if "option" in test and test["option"]:
-            options.append(test["option"])
-        command = generate_command(path_to_pandora, file=test["file"], options=options)
-        output = run_command(command)
+        command = _build_feature_command(test, jar_path, cfg)
+        output = run_command(command, cfg["timeout"], cfg["debug"])
         if output == "TIMEOUT":
             test["actual_result"] = "TIMEOUT"
-            test["score"] = 0
+            test["score"] = 0.0
             continue
         test["actual_result"] = output
         test["score"] = compare_output(output, test["result"])
 
 
-def run_full_tests(tests, path_to_pandora):
-    grouped_tests = {}
+def run_full_tests(tests, jar_path, cfg):
+    """Group full-mode tests by (file, option) and run once per group."""
+    groups = {}
     for test in tests:
         key = (test["file"], test.get("option", ""))
-        if key not in grouped_tests:
-            grouped_tests[key] = []
-        grouped_tests[key].append(test)
+        groups.setdefault(key, []).append(test)
 
-    for (file, option), tests in grouped_tests.items():
+    for (file, option), group in groups.items():
         options = option.split() if option else None
-        command = generate_command(path_to_pandora, file=file, options=options)
-        output = run_command(command)
-        output_lines = output.split("\n")
+        command = build_java_command(
+            jar_path, file=file, options=options,
+            coverage=cfg["coverage"], jacoco_path=cfg["jacoco"],
+            jacoco_append=True
+        )
+        output = run_command(command, cfg["timeout"], cfg["debug"])
+        output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
 
-        for test in tests:
-            feature = test["feature"]
-            expected_result = test["result"]
-            test["actual_result"] = "key " + test["feature"] + ": not found"
-            test["score"] = 0
+        for test in group:
             if output == "TIMEOUT":
                 test["actual_result"] = "TIMEOUT"
-                test["score"] = 0
+                test["score"] = 0.0
                 continue
-            found = False
+
+            lookup_key = test.get("feature") or test.get("metadata") or test.get("parameter", "")
+            test["actual_result"] = f"key {lookup_key}: not found"
+            test["score"] = 0.0
+
             for line in output_lines:
-                key = line.partition(":")[0].strip()
-                if key == feature:
-                    # Extract the actual result from the line
-                    found = True
-                    actual_result = line.partition(":")[2].strip()
-                    test["actual_result"] = actual_result
-                    test["score"] = compare_output(actual_result, expected_result)
+                k, _, v = line.partition(":")
+                if k.strip() == lookup_key:
+                    actual = v.strip()
+                    test["actual_result"] = actual
+                    test["score"] = compare_output(actual, test["result"])
                     break
 
 
-def group_tests_by_milestone(tests):
-    grouped_tests = {}
+# ─── Score aggregation ──────────────────────────────────────────────────────
+
+def average_score(tests):
+    scores = [t["score"] for t in tests if "score" in t]
+    return sum(scores) / len(scores) if scores else 0.0
+
+
+def aggregate_feature_scores(tests, implemented_features):
+    """Average score per aggregation key (feature name, 'metadata', parameter key)."""
+    buckets = {}
     for test in tests:
-        milestone = test["milestone"]
-        if milestone not in grouped_tests:
-            grouped_tests[milestone] = []
-        grouped_tests[milestone].append(test)
-    return grouped_tests
+        key = test_aggregation_key(test)
+        buckets.setdefault(key, []).append(test["score"])
+    return {k: sum(v) / len(v) for k, v in buckets.items()}
 
 
-def sort_tests_by_milestone(tests):
+def aggregate_milestone_scores(tests):
+    groups = {}
+    for t in tests:
+        ms = t.get("milestone", 0)
+        groups.setdefault(ms, []).append(t)
+    return {ms: average_score(ts) for ms, ts in groups.items()}
 
-    return sorted(tests, key=lambda x: x["milestone"])
+
+def group_by_milestone(tests):
+    groups = {}
+    for t in tests:
+        ms = t.get("milestone", 0)
+        groups.setdefault(ms, []).append(t)
+    return groups
 
 
-colors = {"🔴": "red", "🟢": "green", "🟡": "yellow"}
+# ─── Pass badge ─────────────────────────────────────────────────────────────
 
-
-def pass_badge(score):
+def badge(score):
     if score >= 0.9:
         return "🟢"
-    elif score >= 0.8:
+    if score >= 0.8:
         return "🟡"
-    else:
-        return "🔴"
+    return "🔴"
 
 
-def generate_markdown_table(tests):
-    markdown = "| id | mode |feature | file | expected result | actual result | Pass | score |\n"
-    markdown += "|----|------|---------|------|----------------|---------------|------| -------|\n"
-    for test in tests:
-        markdown += f"| {test['id']} | {test['mode']} | {test['feature']} | {test['file']} | {
-            test['result']} | {test['actual_result']} | {pass_badge(test.get('score', 0))} | {test.get('score', '')} |\n"
-    return markdown
+# ─── Report generators ─────────────────────────────────────────────────────
+
+def report_summary(feature_scores):
+    """One line per feature with badge."""
+    lines = []
+    max_len = max((len(k) for k in feature_scores), default=0)
+    for feat, score in feature_scores.items():
+        lines.append(f"{feat:<{max_len}}  {badge(score)}")
+    return "\n".join(lines)
 
 
-def generate_markdown_feature_table(features_score):
-    markdown = "| Feature | Pass | Score |\n"
-    markdown += "|---------|------|-------|\n"
-    for feature, score in features_score.items():
-        markdown += f"| {feature} | {pass_badge(score)} | {score:.2f} |\n"
-    return markdown
+def report_markdown(feature_scores, tests, milestone_scores, total_score,
+                    version_info):
+    """Full Markdown report."""
+    lines = []
+    # Version
+    lines.append(f"# Autograder Report")
+    lines.append("")
+    lines.append(f"**Pandora version**: {version_info['reported']}")
+    if version_info.get("warning"):
+        lines.append(f"> ⚠️ {version_info['warning']}")
+    lines.append("")
+
+    # Total
+    lines.append(f"**Total Score**: {total_score:.2f}")
+    lines.append("")
+
+    # Feature scores
+    lines.append("## Feature Scores")
+    lines.append("")
+    lines.append("| Feature | Pass | Score |")
+    lines.append("|---------|------|-------|")
+    for feat, score in feature_scores.items():
+        lines.append(f"| {feat} | {badge(score)} | {score:.2f} |")
+    lines.append("")
+
+    # Per-milestone detail tables
+    grouped = group_by_milestone(tests)
+    for ms in sorted(grouped.keys(), key=lambda x: (isinstance(x, str), x)):
+        ms_tests = grouped[ms]
+        lines.append(f"## Milestone {ms}")
+        lines.append("")
+        lines.append(
+            "| id | mode | target | file | expected | actual | Pass | score |"
+        )
+        lines.append(
+            "|----|------|--------|------|----------|--------|------|-------|"
+        )
+        for t in ms_tests:
+            lines.append(
+                f"| {t['id']} | {t.get('mode','full')} | {test_display_name(t)} "
+                f"| {t['file']} | {t['result']} | {t['actual_result']} "
+                f"| {badge(t['score'])} | {t['score']:.2f} |"
+            )
+        lines.append("")
+
+    # Milestone scores
+    lines.append("## Milestone Scores")
+    lines.append("")
+    for ms, sc in milestone_scores.items():
+        lines.append(f"- **{ms}**: {sc:.2f}")
+    lines.append("")
+    lines.append(f"**Total Score**: {total_score:.2f}")
+
+    return "\n".join(lines)
 
 
-def sum_scores(tests):
-    total_score = 0
-    count = 0
-    for test in tests:
-        if "score" in test:
-            total_score += test["score"]
-            count += 1
-    if count == 0:
-        return 0
-    return total_score / count
+def report_json(feature_scores, tests, milestone_scores, total_score,
+                implemented_features, version_info, elapsed):
+    """Build the JSON output dict."""
+    data = {
+        "version": version_info["reported"],
+        "versions": {
+            "pandora": version_info["pandora"],
+            "manifest": version_info["manifest"],
+        },
+        "milestone_scores": milestone_scores,
+        "total_score": total_score,
+        "features": implemented_features,
+        "features_score": feature_scores,
+        "tests_by_milestone": group_by_milestone(tests),
+        "time": elapsed,
+    }
+    if version_info.get("warning"):
+        data["version_warning"] = version_info["warning"]
+    return data
+
+
+# ─── Input validation (--check) ────────────────────────────────────────────
+
+def check_inputs(test_suite_path, manifest_path, jar_path):
+    """Validate inputs. Return list of error strings (empty = OK)."""
+    errors = []
+
+    # JAR exists
+    if not os.path.isfile(jar_path):
+        errors.append(f"Pandora JAR not found: {jar_path}")
+
+    # Manifest
+    try:
+        with open(manifest_path, "r") as f:
+            manifest = json.load(f)
+        if "features" not in manifest or not isinstance(manifest["features"], list):
+            errors.append("Manifest missing 'features' array.")
+    except FileNotFoundError:
+        errors.append(f"Manifest file not found: {manifest_path}")
+    except json.JSONDecodeError as e:
+        errors.append(f"Manifest is not valid JSON: {e}")
+
+    # Test suite
+    try:
+        with open(test_suite_path, "r") as f:
+            tests = json.load(f)
+        if not isinstance(tests, list):
+            errors.append("Test suite must be a JSON array.")
+        else:
+            for i, t in enumerate(tests):
+                if "file" not in t:
+                    errors.append(f"Test #{i}: missing 'file' field.")
+                elif not os.path.isfile(t["file"]):
+                    errors.append(f"Test #{i}: file not found: {t['file']}")
+                if "result" not in t:
+                    errors.append(f"Test #{i}: missing 'result' field.")
+                if not (t.get("feature") or t.get("metadata") or t.get("parameter")):
+                    errors.append(
+                        f"Test #{i} (id={t.get('id','?')}): "
+                        "must have 'feature', 'metadata', or 'parameter'."
+                    )
+    except FileNotFoundError:
+        errors.append(f"Test suite file not found: {test_suite_path}")
+    except json.JSONDecodeError as e:
+        errors.append(f"Test suite is not valid JSON: {e}")
+
+    return errors
+
+
+# ─── CLI ────────────────────────────────────────────────────────────────────
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        description="Autograder for the Pandora flight-recorder project.",
+        usage="python autograder.py [options] <path_to_pandora_jar>",
+    )
+    p.add_argument("jar", help="Path to the Pandora JAR file")
+
+    # Path options
+    p.add_argument("-w", "--workdir", default=None,
+                   help="Working directory; relative paths resolved from here")
+    p.add_argument("-t", "--tests", default="./test/testSuite.json",
+                   help="Path to test suite JSON (default: ./test/testSuite.json)")
+    p.add_argument("-m", "--manifest", default="./manifest.json",
+                   help="Path to manifest JSON (default: ./manifest.json)")
+    p.add_argument("-j", "--jacoco", default="target/jacocoagent.jar",
+                   help="Path to JaCoCo agent JAR")
+
+    # Output options
+    output_group = p.add_mutually_exclusive_group()
+    output_group.add_argument("--summary", action="store_true",
+                              help="Compact per-feature badge output")
+    output_group.add_argument("--report", action="store_true",
+                              help="Full Markdown report (default)")
+    p.add_argument("-f", "--format", choices=["json", "md"], default=None,
+                   help="Output format (json or md)")
+    p.add_argument("-o", "--output", default=None,
+                   help="Write output to this file path")
+
+    # Execution options
+    p.add_argument("-c", "--coverage", action="store_true",
+                   help="Enable JaCoCo code coverage")
+    p.add_argument("-d", "--debug", action="store_true",
+                   help="Print executed commands to stdout")
+    p.add_argument("-T", "--timeout", type=int, default=10,
+                   help="Per-command timeout in seconds (default: 10)")
+    p.add_argument("--check", action="store_true",
+                   help="Validate inputs without running tests")
+
+    return p
+
+
+def resolve_path(path, workdir):
+    """If *workdir* is set and *path* is relative, join them."""
+    if workdir and not os.path.isabs(path):
+        return os.path.join(workdir, path)
+    return path
 
 
 def main():
-    global jacoco_agent, enable_coverage, enable_debug
+    parser = build_parser()
+    args = parser.parse_args()
 
-    test_suite_file = ""
-    manifest_file = ""
-    path_to_pandora = ""
-    output_format = "md"
-    output_path = ""
+    # Resolve paths relative to workdir if provided
+    workdir = args.workdir
+    jar_path = resolve_path(args.jar, workdir)
+    test_suite_path = resolve_path(args.tests, workdir)
+    manifest_path = resolve_path(args.manifest, workdir)
+    jacoco_path = resolve_path(args.jacoco, workdir)
 
-    try:
-        opts, args = getopt.getopt(sys.argv[1:], "t:m:f:o:j:cd", ["coverage", "debug"])
-    except getopt.GetoptError:
-        print(
-            "Usage: python autograder.py -t <path_test_suit> -m <path_manifest> -f <json|md> -o <output_path> -j <jacoco_agent_path> [-c|--coverage] [-d|--debug] <pathToPandora>"
-        )
-        sys.exit(1)
+    if workdir:
+        os.chdir(workdir)
 
-    for opt, arg in opts:
-        if opt == "-t":
-            test_suite_file = arg
-        elif opt == "-m":
-            manifest_file = arg
-        elif opt == "-f":
-            output_format = arg
-        elif opt == "-o":
-            output_path = arg
-        elif opt == "-j":
-            jacoco_agent = arg
-        elif opt == "-c" or opt == "--coverage":
-            enable_coverage = True
-        elif opt == "-d" or opt == "--debug":
-            enable_debug = True
+    cfg = {
+        "coverage": args.coverage,
+        "jacoco": jacoco_path,
+        "debug": args.debug,
+        "timeout": args.timeout,
+    }
 
-    if len(args) != 1:
-        print(
-            "Usage: python autograder.py -t <path_test_suit> -m <path_manifest> -f <json|md> -o <output_path> -j <jacoco_agent_path> [-c|--coverage] [-d|--debug] <pathToPandora>"
-        )
-        sys.exit(1)
+    # ── --check mode ──────────────────────────────────────────────────
+    if args.check:
+        errors = check_inputs(test_suite_path, manifest_path, jar_path)
+        if errors:
+            for e in errors:
+                print(f"ERROR: {e}")
+            sys.exit(1)
+        print("All checks passed.")
+        sys.exit(0)
 
-    path_to_pandora = args[0]
-
-    command = generate_command(
-        path_to_pandora, options=["--version"], append_coverage=False
-    )
-    output = run_command(command)
-    if enable_debug:
-        print(output)
-    # For coverage, we need to run at least one command with the jacoco agent if enabled
-    if enable_coverage:
-        command = generate_command(
-            path_to_pandora, options=["--help"], append_coverage=True
-        )
-        output = run_command(command)
-
-    # Read test suite and manifest
-    with open(test_suite_file, "r") as f:
+    # ── Load inputs ───────────────────────────────────────────────────
+    with open(test_suite_path, "r") as f:
         test_suite = json.load(f)
-    with open(manifest_file, "r") as f:
+    with open(manifest_path, "r") as f:
         manifest = json.load(f)
 
-    # Extract data from manifest
-    implemented_features = [feature for feature in manifest["features"]]
+    implemented_features = manifest.get("features", [])
+    manifest_version_raw = manifest.get("version", "0.0.0")
 
-    # Filter tests by implemented features
-    filtered_tests = filter_tests(test_suite, implemented_features)
+    # ── Get Pandora version ───────────────────────────────────────────
+    version_cmd = build_java_command(
+        jar_path, options=["--version"],
+        coverage=False, jacoco_path=jacoco_path, jacoco_append=False
+    )
+    pandora_version_raw = run_command(version_cmd, cfg["timeout"], cfg["debug"])
+    if cfg["debug"]:
+        print(f"[debug] pandora --version: {pandora_version_raw}")
 
-    startTime = time.time()
-    # Run feature tests
-    feature_tests = [test for test in filtered_tests if test["mode"] == "feature"]
-    run_feature_tests(feature_tests, path_to_pandora)
+    # Initialise coverage file if needed
+    if cfg["coverage"]:
+        help_cmd = build_java_command(
+            jar_path, options=["--help"],
+            coverage=True, jacoco_path=jacoco_path, jacoco_append=False
+        )
+        run_command(help_cmd, cfg["timeout"], cfg["debug"])
 
-    # Run full tests
-    full_tests = [test for test in filtered_tests if test["mode"] == "full"]
-    run_full_tests(full_tests, path_to_pandora)
-    stopTime = time.time()
-
-    # Group tests by milestone and sort by milestone
-    sorted_tests = sort_tests_by_milestone(filtered_tests)
-    grouped_tests = group_tests_by_milestone(sorted_tests)
-
-    # Generate markdown tables for each milestone
-    markdown_tables = []
-    for milestone, tests in grouped_tests.items():
-        markdown_table = generate_markdown_table(tests)
-        markdown_tables.append(markdown_table)
-
-    # Sum scores per milestone and total score
-    milestone_scores = {
-        milestone: sum_scores(tests) for milestone, tests in grouped_tests.items()
+    # Version comparison
+    pandora_v = parse_version(pandora_version_raw)
+    manifest_v = parse_version(manifest_version_raw)
+    reported_v = max(pandora_v, manifest_v)
+    version_info = {
+        "pandora": format_version(pandora_v),
+        "manifest": format_version(manifest_v),
+        "reported": format_version(reported_v),
     }
-    total_score = sum_scores(filtered_tests)
+    if pandora_v != manifest_v:
+        version_info["warning"] = (
+            f"Version mismatch: manifest declares {format_version(manifest_v)} "
+            f"but JAR reports {format_version(pandora_v)}"
+        )
 
-    features_score = {feature: 0 for feature in implemented_features}
-    features_count = {feature: 0 for feature in implemented_features}
-    for test in filtered_tests:
-        if "score" in test:
-            features_score[test["feature"]] += test["score"]
-            features_count[test["feature"]] += 1
+    # ── Filter & run tests ────────────────────────────────────────────
+    filtered = filter_tests(test_suite, implemented_features)
 
-    for feature in implemented_features:
-        if features_count[feature] > 0:
-            features_score[feature] /= features_count[feature]
+    start = time.time()
 
-    # Print or save output based on format and output path
-    if output_format == "json":
-        output_data = {
-            "milestone_scores": milestone_scores,
-            "total_score": total_score,
-            "features": implemented_features,
-            "features_score": features_score,
-            "tests": grouped_tests,
-            "time": stopTime - startTime,
-        }
-        if output_path:
-            with open(output_path, "w") as f:
-                json.dump(output_data, f)
-        else:
-            print(json.dumps(output_data, indent=4))
-    elif output_format == "md":
-        output_text = ""
+    feature_mode = [t for t in filtered if t.get("mode") == "feature"]
+    full_mode = [t for t in filtered if t.get("mode", "full") != "feature"]
 
-        markdown_feature_table = generate_markdown_feature_table(features_score)
-        output_text += "Feature Scores:\n"
-        output_text += markdown_feature_table + "\n\n"
+    run_feature_tests(feature_mode, jar_path, cfg)
+    run_full_tests(full_mode, jar_path, cfg)
 
-        for markdown_table in markdown_tables:
-            output_text += markdown_table + "\n\n"
-        output_text += "Milestone Scores:\n"
-        output_text += str(milestone_scores) + "\n"
-        output_text += "Total Score: " + str(total_score)
-        if output_path:
-            with open(output_path, "w") as f:
-                f.write(output_text)
-        else:
-            print(output_text)
+    elapsed = time.time() - start
+
+    # ── Aggregate scores ──────────────────────────────────────────────
+    feature_scores = aggregate_feature_scores(filtered, implemented_features)
+    milestone_scores = aggregate_milestone_scores(filtered)
+    total_score = average_score(filtered)
+
+    # ── Determine output mode ─────────────────────────────────────────
+    fmt = args.format
+    if args.summary:
+        fmt = "summary"
+    elif args.report:
+        fmt = "md"
+    elif fmt is None:
+        fmt = "md"  # default
+
+    # ── Generate output ───────────────────────────────────────────────
+    if fmt == "summary":
+        output_text = report_summary(feature_scores)
+    elif fmt == "json":
+        data = report_json(
+            feature_scores, filtered, milestone_scores, total_score,
+            implemented_features, version_info, elapsed
+        )
+        output_text = json.dumps(data, indent=2, default=str)
     else:
-        print("Invalid output format. Please choose 'json' or 'md'.")
-    # print the total score
-    print("Total Score: " + str(total_score))
+        output_text = report_markdown(
+            feature_scores, filtered, milestone_scores, total_score,
+            version_info
+        )
+
+    # ── Write or print ────────────────────────────────────────────────
+    if args.output:
+        out_path = args.output
+        # Auto-append extension if missing
+        if "." not in os.path.basename(out_path):
+            ext = ".json" if fmt == "json" else ".md"
+            out_path += ext
+        with open(out_path, "w") as f:
+            f.write(output_text)
+    else:
+        print(output_text)
+
+    # Always print total score to stdout
+    if args.output or fmt == "summary":
+        print(f"Total Score: {total_score:.2f}")
+    elif fmt != "json":
+        pass  # already in the markdown
+    else:
+        print(f"Total Score: {total_score:.2f}")
 
 
 if __name__ == "__main__":
