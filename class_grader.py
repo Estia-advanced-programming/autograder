@@ -83,6 +83,18 @@ def run_autograder(
     except Exception as e:
         return None, str(e)
 
+    # Check exit code — if non-zero, autograder encountered an error
+    if proc.returncode != 0:
+        stdout = proc.stdout.strip()
+        stderr = proc.stderr.strip()
+        # If stdout has an error message, use it; otherwise fall back to stderr
+        if stdout:
+            return None, stdout
+        elif stderr:
+            return None, stderr
+        else:
+            return None, f"autograder failed with exit code {proc.returncode}"
+
     # The autograder prints JSON to stdout, possibly followed by "Total Score: ..."
     stdout = proc.stdout.strip()
     if not stdout:
@@ -164,6 +176,11 @@ def validate_test_suite(group_name, group_path, ref_jar, cfg):
     )
     if err:
         print(f"  [!] {group_name}: validation failed: {err}")
+        # Write empty validated test suite to prevent using stale data
+        validated_path = group_validated_test_suite(group_path)
+        os.makedirs(os.path.dirname(validated_path), exist_ok=True)
+        with open(validated_path, "w") as f:
+            json.dump([], f)
         return None, [], []
 
     # Load original test suite to split into valid/invalid
