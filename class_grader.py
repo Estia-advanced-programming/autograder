@@ -33,6 +33,15 @@ def badge(score, declared=True):
     return "🔴"
 
 
+def shorten_team_name(name):
+    """Extract 'the_word1_word2' pattern and return 'word1 word2'."""
+    import re
+    match = re.search(r'the_(\w+)_(\w+)', name)
+    if match:
+        return f"{match.group(1)} {match.group(2)}"
+    return name
+
+
 # ─── Autograder invocation ──────────────────────────────────────────────────
 
 
@@ -336,7 +345,8 @@ def md_feature_group_matrix(title, all_features, group_names, score_matrix):
     score_matrix: {group: {feature: score_or_None}}
     """
     lines = [f"## {title}", ""]
-    header = "| Feature | " + " | ".join(group_names) + " |"
+    short_names = [shorten_team_name(g) for g in group_names]
+    header = "| Feature | " + " | ".join(short_names) + " |"
     sep = "|---------|" + "|".join(["------"] * len(group_names)) + "|"
     lines += [header, sep]
     for feat in all_features:
@@ -358,8 +368,9 @@ def md_metrics_table(title, group_metrics):
     lines.append("| Team | Precision | Recall | F1 | Agreement |")
     lines.append("|------|-----------|--------|----|-----------|")
     for gname, m in sorted(group_metrics.items(), key=lambda x: -x[1]["f1"]):
+        short_name = shorten_team_name(gname)
         lines.append(
-            f"| {gname} | {m['precision']:.2f} | {m['recall']:.2f} "
+            f"| {short_name} | {m['precision']:.2f} | {m['recall']:.2f} "
             f"| {m['f1']:.2f} | {m['agreement']:.2f} |"
         )
     lines.append("")
@@ -369,10 +380,11 @@ def md_metrics_table(title, group_metrics):
 def md_agreement_heatmap(title, group_names, pairwise):
     """Tester x tested agreement heatmap."""
     lines = [f"## {title}", ""]
-    header = "| tested → | " + " | ".join(group_names) + " |"
+    short_names = [shorten_team_name(g) for g in group_names]
+    header = "| tested → | " + " | ".join(short_names) + " |"
     sep = "|----------|" + "|".join(["------"] * len(group_names)) + "|"
     lines += [header, sep]
-    for tester in group_names:
+    for i, tester in enumerate(group_names):
         cells = []
         for tested in group_names:
             if tester == tested:
@@ -380,7 +392,7 @@ def md_agreement_heatmap(title, group_names, pairwise):
             else:
                 val = pairwise.get((tester, tested), 0)
                 cells.append(f"{val:.2f}")
-        lines.append(f"| {tester} | " + " | ".join(cells) + " |")
+        lines.append(f"| {short_names[i]} | " + " | ".join(cells) + " |")
     lines.append("")
     return "\n".join(lines)
 
@@ -396,6 +408,7 @@ def md_summary_table(group_names, group_data):
     )
     for gname in group_names:
         d = group_data.get(gname, {})
+        short_name = shorten_team_name(gname)
         version = d.get("version", "?")
         teacher_score = d.get("teacher_evaluation", {}).get("total_score", 0)
         self_score = d.get("self_evaluation", {}).get("total_score", 0)
@@ -404,7 +417,7 @@ def md_summary_table(group_names, group_data):
         valid = tq.get("valid_tests", 0)
         total = tq.get("total_tests", 0)
         lines.append(
-            f"| {gname} | {version} | {teacher_score:.2f} | {self_score:.2f} "
+            f"| {short_name} | {version} | {teacher_score:.2f} | {self_score:.2f} "
             f"| {f1:.2f} | {valid}/{total} |"
         )
     lines.append("")
@@ -745,6 +758,30 @@ def main():
 
     report_parts = []
     report_parts.append("# Class Grader Report\n")
+    
+    # Add CSS for vertical column headers in Quarto
+    css_block = '''```{=html}
+<style>
+/* Vertical column headers for feature matrices */
+table thead th:not(:first-child) {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    vertical-align: bottom;
+    padding: 0.2em 0.5em;
+    min-height: 150px;
+    white-space: nowrap;
+}
+
+/* Keep first column (Feature/Team) horizontal */
+table thead th:first-child {
+    writing-mode: horizontal-tb;
+    text-align: left;
+}
+</style>
+```
+
+'''
+    report_parts.append(css_block)
     report_parts.append(
         md_feature_group_matrix(
             "Teacher Evaluation (Teacher Tests → Student Pandoras)",
@@ -785,13 +822,14 @@ def main():
     print("=" * 60)
     for gname in group_names:
         d = group_data.get(gname, {})
+        short_name = shorten_team_name(gname)
         ts = d.get("teacher_evaluation", {}).get("total_score", 0)
         ss = d.get("self_evaluation", {}).get("total_score", 0)
         f1 = d.get("test_quality", {}).get("f1", 0)
         vt = d.get("test_quality", {}).get("valid_tests", 0)
         tt = d.get("test_quality", {}).get("total_tests", 0)
         print(
-            f"  {gname:20s}  teacher={ts:.2f}  self={ss:.2f}  "
+            f"  {short_name:20s}  teacher={ts:.2f}  self={ss:.2f}  "
             f"F1={f1:.2f}  tests={vt}/{tt}"
         )
 
