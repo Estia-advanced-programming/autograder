@@ -1,3 +1,11 @@
+## v2.0.0 (2026-03-05)
+
+### Feat
+
+- **install**: add an install script
+- **completion**: add completion script
+- **autograder**: add file checking, parameter and metadata handling, timeout configuration improve output handling
+
 ## v1.1.0 (2026-03-04)
 
 ### Feat
