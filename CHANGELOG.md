@@ -1,3 +1,21 @@
+## v2.1.0 (2026-03-06)
+
+### Feat
+
+- handle multiple files in the testSuite.json
+- implement a feature whitelist to prevent feature bleeding in final evaluation
+- **classGrade**: enhance md table with shorter team name
+- **classGrader**: handle invalid test suit gracefully
+- handle validation failure from autograder
+- **autograder**: check and correct missing test id
+- **classGrader**: create a class grader script
+- **autograder**: handle pandora and testSuite root path separately --test-dir and -P
+
+### Fix
+
+- fix bug in md output when multiple file present in a test
+- handle malformated json
+
 ## v2.0.0 (2026-03-05)
 
 ### Feat
