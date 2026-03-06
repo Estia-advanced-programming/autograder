@@ -181,7 +181,7 @@ def test_category(test):
     if test.get("metadata"):
         return "metadata"
     if test.get("parameter"):
-        return "parameter"
+        return test.get("parameter", "")
     return test.get("feature", "")
 
 
