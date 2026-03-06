@@ -211,6 +211,10 @@ def group_validated_test_suite(group_path):
     return os.path.join(group_path, "test", "testSuite_validated.json")
 
 
+def group_cleaned_test_suite(group_path):
+    return os.path.join(group_path, "test", "testSuite_cleaned.json")
+
+
 def load_manifest(group_path):
     mpath = group_manifest(group_path)
     if not os.path.isfile(mpath):
@@ -219,23 +223,105 @@ def load_manifest(group_path):
         return json.load(f)
 
 
-# ─── Test suite validation ──────────────────────────────────────────────────
+# ─── Test suite cleaning & validation ───────────────────────────────────────
+
+
+def _test_feature_key(test):
+    """Return the feature/parameter/metadata key from a test."""
+    return test.get("feature") or test.get("parameter") or test.get("metadata") or ""
+
+
+def clean_test_suite(group_name, group_path):
+    """Remove truly broken tests from a group's test suite.
+
+    Removes tests that:
+      - Reference missing files
+      - Use features/parameters/metadata not in the whitelist
+
+    Returns (original_tests, cleaned_tests, removed_tests).
+    """
+    ts_path = group_test_suite(group_path)
+    if not os.path.isfile(ts_path):
+        return [], [], []
+
+    try:
+        with open(ts_path, "r") as f:
+            original_tests = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"  [!] {group_name}: malformed testSuite.json: {e}", file=sys.stderr)
+        return [], [], []
+
+    if not isinstance(original_tests, list):
+        print(f"  [!] {group_name}: testSuite.json is not a JSON array", file=sys.stderr)
+        return [], [], []
+
+    cleaned = []
+    removed = []
+
+    for test in original_tests:
+        # Check for missing file
+        test_file = test.get("file", "")
+        if test_file:
+            resolved = os.path.join(group_path, test_file) if not os.path.isabs(test_file) else test_file
+            if not os.path.isfile(resolved):
+                removed.append(test)
+                continue
+
+        # Check feature against whitelist (only if whitelist loaded)
+        feat = test.get("feature")
+        param = test.get("parameter")
+        meta = test.get("metadata")
+
+        if ALLOWED_FEATURES is not None and feat and feat not in ALLOWED_FEATURES:
+            removed.append(test)
+            continue
+        if ALLOWED_PARAMETERS is not None and param and param not in ALLOWED_PARAMETERS:
+            removed.append(test)
+            continue
+        if ALLOWED_METADATA is not None and meta and meta not in ALLOWED_METADATA:
+            removed.append(test)
+            continue
+
+        # Must have at least one of feature/parameter/metadata
+        if not (feat or param or meta):
+            removed.append(test)
+            continue
+
+        cleaned.append(test)
+
+    # Write cleaned test suite
+    cleaned_path = group_cleaned_test_suite(group_path)
+    os.makedirs(os.path.dirname(cleaned_path), exist_ok=True)
+    with open(cleaned_path, "w") as f:
+        json.dump(cleaned, f, indent=2)
+
+    return original_tests, cleaned, removed
 
 
 def validate_test_suite(group_name, group_path, ref_jar, cfg):
-    """Run group's test suite against reference Pandora.
+    """Run group's cleaned test suite against reference Pandora.
 
-    Returns (result_dict, valid_tests_list, invalid_tests_list) or (None, [], []) on error.
+    Returns (result_dict, valid_tests, invalid_tests, removed_tests)
+    or (None, [], [], removed_tests) on error.
+
+    - removed_tests: tests dropped before running (missing files, non-whitelisted)
+    - valid_tests: tests that pass against the reference implementation
+    - invalid_tests: tests that fail against the reference (wrong expected values)
+
+    The cleaned test suite (all non-removed tests) is used for cross-testing,
+    so that both valid and invalid tests contribute to precision/recall.
     """
-    ts_path = group_test_suite(group_path)
-    manifest_path = group_manifest(group_path)
+    original, cleaned, removed = clean_test_suite(group_name, group_path)
 
-    if not os.path.isfile(ts_path):
-        return None, [], []
+    if not cleaned:
+        return None, [], [], removed
+
+    cleaned_path = group_cleaned_test_suite(group_path)
+    manifest_path = group_manifest(group_path)
 
     data, err = run_autograder(
         jar=ref_jar,
-        test_suite=ts_path,
+        test_suite=cleaned_path,
         manifest=manifest_path,
         test_dir=group_path,
         coverage=False,
@@ -245,18 +331,9 @@ def validate_test_suite(group_name, group_path, ref_jar, cfg):
     )
     if err:
         print(f"  [!] {group_name}: validation failed: {err}")
-        # Write empty validated test suite to prevent using stale data
-        validated_path = group_validated_test_suite(group_path)
-        os.makedirs(os.path.dirname(validated_path), exist_ok=True)
-        with open(validated_path, "w") as f:
-            json.dump([], f)
-        return None, [], []
+        return None, [], [], removed
 
-    # Load original test suite to split into valid/invalid
-    with open(ts_path, "r") as f:
-        original_tests = json.load(f)
-
-    # Build lookup from autograder results — index by id if present, else by position
+    # Build lookup from autograder results — index by id
     scored = {}
     for ms_tests in data.get("tests_by_milestone", {}).values():
         for t in ms_tests:
@@ -271,19 +348,13 @@ def validate_test_suite(group_name, group_path, ref_jar, cfg):
         return 0
 
     valid = [
-        t for i, t in enumerate(original_tests) if _test_score(t, i) >= PASS_THRESHOLD
+        t for i, t in enumerate(cleaned) if _test_score(t, i) >= PASS_THRESHOLD
     ]
     invalid = [
-        t for i, t in enumerate(original_tests) if _test_score(t, i) < PASS_THRESHOLD
+        t for i, t in enumerate(cleaned) if _test_score(t, i) < PASS_THRESHOLD
     ]
 
-    # Write validated test suite
-    validated_path = group_validated_test_suite(group_path)
-    os.makedirs(os.path.dirname(validated_path), exist_ok=True)
-    with open(validated_path, "w") as f:
-        json.dump(valid, f, indent=2)
-
-    return data, valid, invalid
+    return data, valid, invalid, removed
 
 
 # ─── Collect all features across all groups ─────────────────────────────────
@@ -446,10 +517,10 @@ def md_summary_table(group_names, group_data):
     """Per-group summary table."""
     lines = ["## Class Summary", ""]
     lines.append(
-        "| Team | Version | Teacher Score | Self Score | Test Quality (F1) | Valid Tests |"
+        "| Team | Version | Teacher Score | Self Score | Test Quality (F1) | Valid Tests | Removed |"
     )
     lines.append(
-        "|------|---------|---------------|------------|-------------------|-------------|"
+        "|------|---------|---------------|------------|-------------------|-------------|---------|"
     )
     for gname in group_names:
         d = group_data.get(gname, {})
@@ -461,9 +532,10 @@ def md_summary_table(group_names, group_data):
         f1 = tq.get("f1", 0)
         valid = tq.get("valid_tests", 0)
         total = tq.get("total_tests", 0)
+        removed = tq.get("removed_tests", 0)
         lines.append(
             f"| {short_name} | {version} | {teacher_score:.2f} | {self_score:.2f} "
-            f"| {f1:.2f} | {valid}/{total} |"
+            f"| {f1:.2f} | {valid}/{total} | {removed} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -608,51 +680,31 @@ def main():
             continue
 
         print(f"  [{gname}] validating test suite...")
-        data, valid, invalid = validate_test_suite(gname, gpath, ref_jar, cfg)
-        validation_results[gname] = (data, valid, invalid)
+        data, valid, invalid, removed = validate_test_suite(gname, gpath, ref_jar, cfg)
+        validation_results[gname] = (data, valid, invalid, removed)
         if data:
-            print(f"  [{gname}] valid: {len(valid)}, invalid: {len(invalid)}")
+            print(f"  [{gname}] valid: {len(valid)}, invalid: {len(invalid)}, removed: {len(removed)}")
+        elif removed:
+            print(f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)")
 
     # ── Self-evaluation (student tests → own Pandora) ────────────────
     print("\n=== Self-Evaluation (Student Tests → Own Pandora) ===")
     for gname, gpath in groups:
         jar = group_jar(gpath)
-        ts = group_test_suite(gpath)
-        validated_ts = group_validated_test_suite(gpath)
+        cleaned_ts = group_cleaned_test_suite(gpath)
         manifest_path = group_manifest(gpath)
         if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
             continue
 
-        # Check if we should use original or validated test suite
-        use_ts = ts
-        if os.path.isfile(ts):
-            # Check if original test suite is valid
-            if check_test_suite(
-                ts,
-                manifest_path,
-                jar,
-                test_dir=gpath,
-                timeout=cfg["timeout"],
-                debug=cfg["debug"],
-            ):
-                print(f"  [{gname}] self-evaluation (using original tests)...")
-                use_ts = ts
-            else:
-                print(
-                    f"  [{gname}] original test suite invalid, using validated tests..."
-                )
-                use_ts = validated_ts
-        else:
-            print(f"  [{gname}] no original test suite, using validated tests...")
-            use_ts = validated_ts
-
-        if not os.path.isfile(use_ts):
-            print(f"  [{gname}] SKIP: no valid test suite available")
+        if not os.path.isfile(cleaned_ts):
+            print(f"  [{gname}] SKIP: no cleaned test suite available")
             continue
+
+        print(f"  [{gname}] self-evaluation (using cleaned tests)...")
 
         data, err = run_autograder(
             jar=jar,
-            test_suite=use_ts,
+            test_suite=cleaned_ts,
             manifest=manifest_path,
             test_dir=gpath,
             timeout=cfg["timeout"],
@@ -675,13 +727,13 @@ def main():
             if score is not None:
                 ground_truth[(gname, feat)] = score >= PASS_THRESHOLD
 
-    # For each tester group, run their validated tests against all other groups
+    # For each tester group, run their cleaned tests against all other groups
     tester_verdicts = {}  # tester -> {(tested_group, feature): bool}
     cross_results = {}  # (tester, tested) -> autograder JSON
 
     for tester_name, tester_path in groups:
-        validated_ts = group_validated_test_suite(tester_path)
-        if not os.path.isfile(validated_ts):
+        cleaned_ts = group_cleaned_test_suite(tester_path)
+        if not os.path.isfile(cleaned_ts):
             continue
 
         tester_verdicts[tester_name] = {}
@@ -697,7 +749,7 @@ def main():
 
             data, err = run_autograder(
                 jar=jar,
-                test_suite=validated_ts,
+                test_suite=cleaned_ts,
                 manifest=manifest_path,
                 test_dir=tester_path,
                 timeout=cfg["timeout"],
@@ -744,8 +796,8 @@ def main():
     for gname in group_names:
         te = teacher_eval.get(gname, {})
         se = self_eval.get(gname, {})
-        vr = validation_results.get(gname, (None, [], []))
-        _, valid, invalid = vr
+        vr = validation_results.get(gname, (None, [], [], []))
+        _, valid, invalid, removed = vr
         metrics = group_metrics.get(
             gname, {"precision": 0, "recall": 0, "f1": 0, "agreement": 0}
         )
@@ -763,9 +815,11 @@ def main():
                 "total_score": se.get("total_score", 0),
             },
             "test_quality": {
-                "total_tests": len(valid) + len(invalid),
+                "total_tests": len(valid) + len(invalid) + len(removed),
+                "cleaned_tests": len(valid) + len(invalid),
                 "valid_tests": len(valid),
                 "invalid_tests": len(invalid),
+                "removed_tests": len(removed),
                 "precision": metrics.get("precision", 0),
                 "recall": metrics.get("recall", 0),
                 "f1": metrics.get("f1", 0),
@@ -791,7 +845,7 @@ def main():
     # Validation scores matrix (student tests → teacher pandora)
     validation_scores = {}
     for gname, gpath in groups:
-        vr = validation_results.get(gname, (None, [], []))
+        vr = validation_results.get(gname, (None, [], [], []))
         vdata = vr[0]
         mfeats = group_manifests.get(gname, [])
         if vdata:
@@ -873,9 +927,10 @@ table thead th:first-child {
         f1 = d.get("test_quality", {}).get("f1", 0)
         vt = d.get("test_quality", {}).get("valid_tests", 0)
         tt = d.get("test_quality", {}).get("total_tests", 0)
+        rm = d.get("test_quality", {}).get("removed_tests", 0)
         print(
             f"  {short_name:20s}  teacher={ts:.2f}  self={ss:.2f}  "
-            f"F1={f1:.2f}  tests={vt}/{tt}"
+            f"F1={f1:.2f}  tests={vt}/{tt}  removed={rm}"
         )
 
 
