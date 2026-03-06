@@ -136,6 +136,7 @@ def build_java_command(
     jar_path,
     *,
     file=None,
+    files=None,
     options=None,
     coverage=False,
     jacoco_path=None,
@@ -149,7 +150,9 @@ def build_java_command(
     parts += ["-Duser.country=US", "-Duser.language=en", "-jar", jar_path]
     if options:
         parts.extend(options)
-    if file:
+    if files:
+        parts.extend(files)
+    elif file:
         parts.append(file)
     return " ".join(parts)
 
@@ -344,6 +347,16 @@ def _build_feature_command(test, jar_path, cfg):
         options += ["-m", test["metadata"]]
     if test.get("option"):
         options += test["option"].split()
+    if "files" in test:
+        file_paths = [resolve_path(f, cfg.get("test_dir")) for f in test["files"]]
+        return build_java_command(
+            jar_path,
+            files=file_paths,
+            options=options or None,
+            coverage=cfg["coverage"],
+            jacoco_path=cfg["jacoco"],
+            jacoco_append=True,
+        )
     file_path = resolve_path(test["file"], cfg.get("test_dir"))
     return build_java_command(
         jar_path,
@@ -372,20 +385,34 @@ def run_full_tests(tests, jar_path, cfg):
     """Group full-mode tests by (file, option) and run once per group."""
     groups = {}
     for test in tests:
-        key = (test["file"], test.get("option", ""))
+        if "files" in test:
+            key = (tuple(test["files"]), test.get("option", ""))
+        else:
+            key = (test["file"], test.get("option", ""))
         groups.setdefault(key, []).append(test)
 
     for (file, option), group in groups.items():
         options = option.split() if option else None
-        file_path = resolve_path(file, cfg.get("test_dir"))
-        command = build_java_command(
-            jar_path,
-            file=file_path,
-            options=options,
-            coverage=cfg["coverage"],
-            jacoco_path=cfg["jacoco"],
-            jacoco_append=True,
-        )
+        if isinstance(file, tuple):
+            file_paths = [resolve_path(f, cfg.get("test_dir")) for f in file]
+            command = build_java_command(
+                jar_path,
+                files=file_paths,
+                options=options,
+                coverage=cfg["coverage"],
+                jacoco_path=cfg["jacoco"],
+                jacoco_append=True,
+            )
+        else:
+            file_path = resolve_path(file, cfg.get("test_dir"))
+            command = build_java_command(
+                jar_path,
+                file=file_path,
+                options=options,
+                coverage=cfg["coverage"],
+                jacoco_path=cfg["jacoco"],
+                jacoco_append=True,
+            )
         output = run_command(command, cfg["timeout"], cfg["debug"])
         output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
 
@@ -589,8 +616,12 @@ def check_inputs(test_suite_path, manifest_path, jar_path, test_dir=None):
             for i, t in enumerate(tests):
                 if "id" not in t:
                     errors.append(f"Test #{i}: missing 'id' field.")
-                if "file" not in t:
+                if "file" not in t and "files" not in t:
                     errors.append(f"Test #{i}: missing 'file' field.")
+                elif "files" in t:
+                    for f in t["files"]:
+                        if not os.path.isfile(resolve_path(f, test_dir)):
+                            errors.append(f"Test #{i}: file not found: {f}")
                 elif not os.path.isfile(resolve_path(t["file"], test_dir)):
                     errors.append(f"Test #{i}: file not found: {t['file']}")
                 if "result" not in t:

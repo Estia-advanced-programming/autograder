@@ -252,7 +252,9 @@ def clean_test_suite(group_name, group_path):
         return [], [], []
 
     if not isinstance(original_tests, list):
-        print(f"  [!] {group_name}: testSuite.json is not a JSON array", file=sys.stderr)
+        print(
+            f"  [!] {group_name}: testSuite.json is not a JSON array", file=sys.stderr
+        )
         return [], [], []
 
     cleaned = []
@@ -262,7 +264,11 @@ def clean_test_suite(group_name, group_path):
         # Check for missing file
         test_file = test.get("file", "")
         if test_file:
-            resolved = os.path.join(group_path, test_file) if not os.path.isabs(test_file) else test_file
+            resolved = (
+                os.path.join(group_path, test_file)
+                if not os.path.isabs(test_file)
+                else test_file
+            )
             if not os.path.isfile(resolved):
                 removed.append(test)
                 continue
@@ -347,12 +353,8 @@ def validate_test_suite(group_name, group_path, ref_jar, cfg):
             return scored[tid]
         return 0
 
-    valid = [
-        t for i, t in enumerate(cleaned) if _test_score(t, i) >= PASS_THRESHOLD
-    ]
-    invalid = [
-        t for i, t in enumerate(cleaned) if _test_score(t, i) < PASS_THRESHOLD
-    ]
+    valid = [t for i, t in enumerate(cleaned) if _test_score(t, i) >= PASS_THRESHOLD]
+    invalid = [t for i, t in enumerate(cleaned) if _test_score(t, i) < PASS_THRESHOLD]
 
     return data, valid, invalid, removed
 
@@ -683,9 +685,13 @@ def main():
         data, valid, invalid, removed = validate_test_suite(gname, gpath, ref_jar, cfg)
         validation_results[gname] = (data, valid, invalid, removed)
         if data:
-            print(f"  [{gname}] valid: {len(valid)}, invalid: {len(invalid)}, removed: {len(removed)}")
+            print(
+                f"  [{gname}] valid: {len(valid)}, invalid: {len(invalid)}, removed: {len(removed)}"
+            )
         elif removed:
-            print(f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)")
+            print(
+                f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)"
+            )
 
     # ── Self-evaluation (student tests → own Pandora) ────────────────
     print("\n=== Self-Evaluation (Student Tests → Own Pandora) ===")
