@@ -19,6 +19,39 @@ import subprocess
 import sys
 import time
 
+# ─── Feature whitelist loader ──────────────────────────────────────────────
+
+
+def load_feature_whitelist():
+    """Load feature whitelist from features-whitelist.json.
+
+    If the file is not found, return None (allow all features).
+    Returns a dict with 'features', 'parameters', and 'metadata_allowed' keys.
+    """
+    whitelist_path = os.path.join(os.path.dirname(__file__), "features-whitelist.json")
+    if not os.path.isfile(whitelist_path):
+        return None
+
+    try:
+        with open(whitelist_path, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+FEATURE_WHITELIST = load_feature_whitelist()
+
+# Convenience sets for validation
+ALLOWED_FEATURES = (
+    set(FEATURE_WHITELIST.get("features", [])) if FEATURE_WHITELIST else None
+)
+ALLOWED_PARAMETERS = (
+    set(FEATURE_WHITELIST.get("parameters", [])) if FEATURE_WHITELIST else None
+)
+ALLOWED_METADATA = (
+    set(FEATURE_WHITELIST.get("metadata_allowed", [])) if FEATURE_WHITELIST else None
+)
+
 # ─── Scoring helpers ────────────────────────────────────────────────────────
 
 SCORE_FACTOR = 50
@@ -168,6 +201,101 @@ def test_display_name(test):
 
 
 # ─── Filtering ──────────────────────────────────────────────────────────────
+
+
+def validate_features(features, source="manifest", warn=True):
+    """Validate features against the whitelist.
+
+    If no whitelist is loaded, all features are allowed.
+
+    Args:
+        features: List of feature names to validate
+        source: Description of the source (for error messages)
+        warn: If True, print warnings for invalid features
+
+    Returns:
+        List of valid features (filtered to only those in whitelist)
+    """
+    if ALLOWED_FEATURES is None:
+        return features
+
+    valid = []
+    invalid = []
+
+    for feature in features:
+        if feature in ALLOWED_FEATURES:
+            valid.append(feature)
+        else:
+            invalid.append(feature)
+
+    if invalid and warn:
+        print(
+            f"WARNING: {source} contains invalid features that will be ignored:",
+            file=sys.stderr,
+        )
+        for feat in invalid:
+            print(f"  - {feat}", file=sys.stderr)
+
+    return valid
+
+
+def validate_test_features(tests, warn=True):
+    """Validate features/parameters/metadata used in tests against whitelist.
+
+    If no whitelist is loaded, all features are allowed.
+
+    Args:
+        tests: List of test dictionaries
+        warn: If True, print warnings for invalid features
+
+    Returns:
+        List of invalid features found in tests
+    """
+    if ALLOWED_FEATURES is None:
+        return []
+
+    invalid = []
+    seen = set()
+
+    for test in tests:
+        # Check feature field
+        if "feature" in test and test["feature"]:
+            feat = test["feature"]
+            if feat not in ALLOWED_FEATURES and feat not in seen:
+                invalid.append(feat)
+                seen.add(feat)
+
+        # Check parameter field
+        if "parameter" in test and test["parameter"]:
+            param = test["parameter"]
+            if (
+                ALLOWED_PARAMETERS is not None
+                and param not in ALLOWED_PARAMETERS
+                and param not in seen
+            ):
+                invalid.append(param)
+                seen.add(param)
+
+        # Check metadata field - check against metadata_allowed
+        if "metadata" in test and test["metadata"]:
+            meta = test["metadata"]
+            if (
+                ALLOWED_METADATA is not None
+                and meta not in ALLOWED_METADATA
+                and meta not in seen
+            ):
+                invalid.append(meta)
+                seen.add(meta)
+
+    if invalid and warn:
+        print(
+            f"WARNING: Test suite contains invalid features that will be ignored:",
+            file=sys.stderr,
+        )
+        for feat in invalid:
+            print(f"  - {feat}", file=sys.stderr)
+
+    return invalid
 
 
 def validate_and_generate_test_ids(tests):
@@ -434,6 +562,15 @@ def check_inputs(test_suite_path, manifest_path, jar_path, test_dir=None):
             manifest = json.load(f)
         if "features" not in manifest or not isinstance(manifest["features"], list):
             errors.append("Manifest missing 'features' array.")
+        elif ALLOWED_FEATURES is not None:
+            # Only validate features if whitelist is loaded
+            invalid_features = [
+                f for f in manifest["features"] if f not in ALLOWED_FEATURES
+            ]
+            if invalid_features:
+                errors.append(
+                    f"Manifest contains invalid features: {', '.join(invalid_features)}"
+                )
     except FileNotFoundError:
         errors.append(f"Manifest file not found: {manifest_path}")
     except json.JSONDecodeError as e:
@@ -446,6 +583,9 @@ def check_inputs(test_suite_path, manifest_path, jar_path, test_dir=None):
         if not isinstance(tests, list):
             errors.append("Test suite must be a JSON array.")
         else:
+            # Collect invalid features from test suite
+            invalid_test_features = set()
+
             for i, t in enumerate(tests):
                 if "id" not in t:
                     errors.append(f"Test #{i}: missing 'id' field.")
@@ -460,6 +600,22 @@ def check_inputs(test_suite_path, manifest_path, jar_path, test_dir=None):
                         f"Test #{i} (id={t.get('id','?')}): "
                         "must have 'feature', 'metadata', or 'parameter'."
                     )
+
+                # Check feature/parameter/metadata against whitelist (only if loaded)
+                if ALLOWED_FEATURES is not None:
+                    if t.get("feature") and t["feature"] not in ALLOWED_FEATURES:
+                        invalid_test_features.add(t["feature"])
+                if ALLOWED_PARAMETERS is not None:
+                    if t.get("parameter") and t["parameter"] not in ALLOWED_PARAMETERS:
+                        invalid_test_features.add(t["parameter"])
+                if ALLOWED_METADATA is not None:
+                    if t.get("metadata") and t["metadata"] not in ALLOWED_METADATA:
+                        invalid_test_features.add(t["metadata"])
+
+            if invalid_test_features:
+                errors.append(
+                    f"Test suite contains invalid features: {', '.join(sorted(invalid_test_features))}"
+                )
     except FileNotFoundError:
         errors.append(f"Test suite file not found: {test_suite_path}")
     except json.JSONDecodeError as e:
@@ -616,7 +772,15 @@ def main():
     # ── Validate and generate test IDs ────────────────────────────────
     validate_and_generate_test_ids(test_suite)
 
-    implemented_features = manifest.get("features", [])
+    # ── Validate features against whitelist ───────────────────────────
+    raw_features = manifest.get("features", [])
+    implemented_features = validate_features(
+        raw_features, source="Manifest", warn=not args.check
+    )
+
+    # Validate test suite features
+    validate_test_features(test_suite, warn=not args.check)
+
     manifest_version_raw = manifest.get("version", "0.0.0")
 
     # ── Get Pandora version ───────────────────────────────────────────

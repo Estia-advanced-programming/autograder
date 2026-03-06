@@ -19,6 +19,39 @@ import sys
 PASS_THRESHOLD = 0.9
 PARTIAL_THRESHOLD = 0.5
 
+# ─── Feature whitelist loader ──────────────────────────────────────────────
+
+
+def load_feature_whitelist():
+    """Load feature whitelist from features-whitelist.json.
+
+    If the file is not found, return None (allow all features).
+    Returns a dict with 'features', 'parameters', and 'metadata_allowed' keys.
+    """
+    whitelist_path = os.path.join(os.path.dirname(__file__), "features-whitelist.json")
+    if not os.path.isfile(whitelist_path):
+        return None
+
+    try:
+        with open(whitelist_path, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+FEATURE_WHITELIST = load_feature_whitelist()
+
+# Convenience sets for validation
+ALLOWED_FEATURES = (
+    set(FEATURE_WHITELIST.get("features", [])) if FEATURE_WHITELIST else None
+)
+ALLOWED_PARAMETERS = (
+    set(FEATURE_WHITELIST.get("parameters", [])) if FEATURE_WHITELIST else None
+)
+ALLOWED_METADATA = (
+    set(FEATURE_WHITELIST.get("metadata_allowed", [])) if FEATURE_WHITELIST else None
+)
+
 # ─── Badges ─────────────────────────────────────────────────────────────────
 
 
@@ -36,7 +69,8 @@ def badge(score, declared=True):
 def shorten_team_name(name):
     """Extract 'the_word1_word2' pattern and return 'word1 word2'."""
     import re
-    match = re.search(r'the_(\w+)_(\w+)', name)
+
+    match = re.search(r"the_(\w+)_(\w+)", name)
     if match:
         return f"{match.group(1)} {match.group(2)}"
     return name
@@ -256,12 +290,23 @@ def validate_test_suite(group_name, group_path, ref_jar, cfg):
 
 
 def collect_all_features(groups):
-    """Return sorted list of all unique features across all manifests."""
+    """Return sorted list of all unique features across all manifests.
+
+    If a whitelist is loaded, only includes features in the ALLOWED_FEATURES.
+    If no whitelist is found, includes all features.
+    """
     features = set()
     for _, gpath in groups:
         manifest = load_manifest(gpath)
         if manifest:
-            features.update(manifest.get("features", []))
+            manifest_features = manifest.get("features", [])
+            if ALLOWED_FEATURES is None:
+                # No whitelist — allow all features
+                features.update(manifest_features)
+            else:
+                # Only add features that are in the whitelist
+                valid_features = [f for f in manifest_features if f in ALLOWED_FEATURES]
+                features.update(valid_features)
     return sorted(features)
 
 
@@ -758,9 +803,9 @@ def main():
 
     report_parts = []
     report_parts.append("# Class Grader Report\n")
-    
+
     # Add CSS for vertical column headers in Quarto
-    css_block = '''```{=html}
+    css_block = """```{=html}
 <style>
 /* Vertical column headers for feature matrices */
 table thead th:not(:first-child) {
@@ -780,7 +825,7 @@ table thead th:first-child {
 </style>
 ```
 
-'''
+"""
     report_parts.append(css_block)
     report_parts.append(
         md_feature_group_matrix(
