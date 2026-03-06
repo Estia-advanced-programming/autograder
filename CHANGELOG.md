@@ -1,3 +1,10 @@
+## v2.1.1 (2026-03-06)
+
+### Fix
+
+- handle pandora version of the format Pandora@X.X.X
+- read correct category for parameter test
+
 ## v2.1.0 (2026-03-06)
 
 ### Feat
