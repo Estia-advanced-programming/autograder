@@ -526,6 +526,7 @@ def report_markdown(feature_scores, tests, milestone_scores, total_score, versio
         lines.append("| id | mode | target | file | expected | actual | Pass | score |")
         lines.append("|----|------|--------|------|----------|--------|------|-------|")
         for t in ms_tests:
+            t["file"] = t.get("file", ", ".join(t.get("files", [])))
             lines.append(
                 f"| {t['id']} | {t.get('mode','full')} | {test_display_name(t)} "
                 f"| {t['file']} | {t['result']} | {t['actual_result']} "
