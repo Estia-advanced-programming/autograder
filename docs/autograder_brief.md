@@ -72,12 +72,13 @@ A JSON array of test objects. Each test targets one of several categories:
 | `feature`    | string                 | conditional | The feature name. Required for feature-mode and full-mode tests targeting a standard `-o` feature. |
 | `metadata`   | string                 | conditional | The metadata key to query (e.g. `"flight_id"`). When set, test targets the `-m` flag. |
 | `parameter`  | string                 | conditional | A parameter-related key (e.g. `"number"`, `"parameters"`). When set, test targets parameter flags. |
-| `option`     | string                 | no       | Additional CLI flag(s) passed to Pandora (e.g. `"-p"`, `"-u Metric"`). Space-separated if multiple. |
+| `group`      | string                 | no       | Override aggregation and filtering category. When set, the test’s score is aggregated under this value (e.g. `"imperial"`) instead of its feature/metadata/parameter, and the manifest must list this value for the test to run. |
+| `option`     | string                 | no       | Additional CLI flag(s) passed to Pandora (e.g. `"-p"`, `"--imperial"`). Space-separated if multiple. |
 | `file`       | string                 | yes      | Path to the test input file (relative to the working directory) |
 | `result`     | string, int, or float  | yes      | Expected output value |
 | `milestone`  | string or number       | no (default: 0)      | Grouping label for milestone-based reporting |
 
-Exactly one of `feature`, `metadata`, or `parameter` should be set per test to determine the test category.
+Exactly one of `feature`, `metadata`, or `parameter` should be set per test to determine the test category. The optional `group` field overrides how the test is categorized for filtering and score aggregation.
 
 ### 3.2 Manifest (`manifest.json`)
 
@@ -205,6 +206,7 @@ Before comparison, stdout is:
 
 - **Per-test**: Individual score 0.0–1.0.
 - **Per-feature**: Average score across all tests sharing the same `feature` value. Additionally, all `metadata` tests are aggregated together under the `"metadata"` key,  `parameter` tests under their key (`number`, `unit`, `metric`...).
+- **Per-group**: When a test has a `group` field, its score is aggregated under the group name instead of its feature/metadata/parameter key. This allows grouping tests for different features under a single umbrella (e.g. `"imperial"` groups all imperial-unit tests regardless of which feature they target).
 - **Per-milestone**: Average score across all tests in that milestone.
 - **Total score**: Average score across all filtered tests.
 

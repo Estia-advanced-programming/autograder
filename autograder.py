@@ -179,7 +179,13 @@ def format_version(version_tuple):
 
 
 def test_category(test):
-    """Return the manifest key that must be present for this test to run."""
+    """Return the manifest key that must be present for this test to run.
+
+    If 'group' is set, it overrides the default category — the manifest must
+    list the group value (e.g. 'imperial') for the test to be included.
+    """
+    if test.get("group"):
+        return test["group"]
     if test.get("metadata"):
         return "metadata"
     if test.get("parameter"):
@@ -188,7 +194,13 @@ def test_category(test):
 
 
 def test_aggregation_key(test):
-    """Return the key under which this test's score is aggregated in feature scores."""
+    """Return the key under which this test's score is aggregated in feature scores.
+
+    If 'group' is set, all tests sharing the same group are aggregated together
+    under that group name instead of their individual feature/metadata/parameter.
+    """
+    if test.get("group"):
+        return test["group"]
     if test.get("metadata"):
         return "metadata"
     if test.get("parameter"):
@@ -198,11 +210,16 @@ def test_aggregation_key(test):
 
 def test_display_name(test):
     """Human-readable label for the test target."""
+    base = None
     if test.get("metadata"):
-        return f"metadata:{test['metadata']}"
-    if test.get("parameter"):
-        return test["parameter"]
-    return test.get("feature", "?")
+        base = f"metadata:{test['metadata']}"
+    elif test.get("parameter"):
+        base = test["parameter"]
+    else:
+        base = test.get("feature", "?")
+    if test.get("group"):
+        return f"{test['group']}:{base}"
+    return base
 
 
 # ─── Filtering ──────────────────────────────────────────────────────────────
