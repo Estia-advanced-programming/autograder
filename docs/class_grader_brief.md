@@ -56,6 +56,7 @@ python class_grader.py [-C config.yml] [-d <class_dir> -t <teacher_tests> -r <re
 | `-T` / `--timeout` | `<int>` | no | Per-command timeout in seconds (default: 10) |
 | `--debug` | — | no | Enable debug output |
 | `--fast` | — | no | Fast mode: only run teacher→students and students→teacher, skip cross-testing |
+| `--dryrun` | — | no | Print the autograder commands that would be run without executing them |
 
 \* Required options (`-d`, `-t`, `-r`) can be provided via CLI arguments, the YAML config file, or a combination of both. CLI arguments always override config file values.
 
@@ -77,6 +78,7 @@ json: true
 timeout: 15
 debug: false
 fast: true
+dryrun: false
 ```
 
 **Example usage:**

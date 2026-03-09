@@ -13,6 +13,7 @@ import argparse
 import copy
 import json
 import os
+import shlex
 import subprocess
 import sys
 
@@ -90,11 +91,19 @@ def find_autograder():
 
 
 def check_test_suite(
-    test_suite, manifest, jar, test_dir=None, pandora_dir=None, timeout=10, debug=False
+    test_suite,
+    manifest,
+    jar,
+    test_dir=None,
+    pandora_dir=None,
+    timeout=10,
+    debug=False,
+    dryrun=False,
 ):
     """Run autograder --check to validate test suite inputs.
 
     Returns True if all checks pass, False otherwise.
+    In dryrun mode, prints the command and returns True.
     """
     autograder = find_autograder()
     cmd = [sys.executable, autograder, "--check", "-t", test_suite, "-m", manifest]
@@ -107,6 +116,10 @@ def check_test_suite(
     if debug:
         cmd.append("-d")
     cmd.append(jar)
+
+    if dryrun:
+        print(f"    $ {shlex.join(cmd)}")
+        return True
 
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -125,14 +138,17 @@ def run_autograder(
     jacoco=None,
     timeout=10,
     debug=False,
+    dryrun=False,
 ):
     """Run the autograder as a subprocess and return parsed JSON output.
 
     Args:
         test_dir: --test-dir for autograder (CWD for Pandora, test file resolution)
         pandora_dir: -P for autograder (manifest/jar/jacoco resolution)
+        dryrun: if True, print the command instead of running it
 
     Returns (dict, None) on success or (None, error_string) on failure.
+    In dryrun mode, returns (None, None).
     """
     autograder = find_autograder()
     cmd = [sys.executable, autograder, "-f", "json", "-t", test_suite, "-m", manifest]
@@ -149,6 +165,10 @@ def run_autograder(
     if debug:
         cmd.append("-d")
     cmd.append(jar)
+
+    if dryrun:
+        print(f"    $ {shlex.join(cmd)}")
+        return None, None
 
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout * 60)
@@ -232,8 +252,14 @@ def load_manifest(group_path):
 
 
 def _test_feature_key(test):
-    """Return the feature/parameter/metadata key from a test."""
-    return test.get("feature") or test.get("parameter") or test.get("metadata") or ""
+    """Return the group/feature/parameter/metadata key from a test."""
+    return (
+        test.get("group")
+        or test.get("feature")
+        or test.get("parameter")
+        or test.get("metadata")
+        or ""
+    )
 
 
 def clean_test_suite(group_name, group_path):
@@ -339,6 +365,7 @@ def validate_test_suite(group_name, group_path, ref_jar, cfg):
         jacoco=cfg.get("jacoco"),
         timeout=cfg.get("timeout", 10),
         debug=cfg.get("debug", False),
+        dryrun=cfg.get("dryrun", False),
     )
     if err:
         print(f"  [!] {group_name}: validation failed: {err}")
@@ -557,7 +584,9 @@ def load_yaml_config(path):
     Raises SystemExit with a clear message on errors.
     """
     if yaml is None:
-        print("Error: PyYAML is required to use --config. Install it with: pip install pyyaml")
+        print(
+            "Error: PyYAML is required to use --config. Install it with: pip install pyyaml"
+        )
         sys.exit(1)
 
     try:
@@ -583,7 +612,9 @@ def build_parser():
         usage="python class_grader.py [-C config.yml] [-d <class_dir> -t <teacher_tests> -r <ref_jar>] [options]",
     )
     p.add_argument(
-        "-C", "--config", default=None,
+        "-C",
+        "--config",
+        default=None,
         help="Path to a YAML configuration file (CLI options override config values)",
     )
     p.add_argument(
@@ -609,12 +640,17 @@ def build_parser():
         help="Output directory for reports (default: current dir)",
     )
     p.add_argument(
-        "-c", "--coverage", default=None, action="store_true",
+        "-c",
+        "--coverage",
+        default=None,
+        action="store_true",
         help="Enable JaCoCo coverage analysis",
     )
     p.add_argument("-j", "--jacoco", default=None, help="Path to JaCoCo agent JAR")
     p.add_argument(
-        "--json", default=None, action="store_true",
+        "--json",
+        default=None,
+        action="store_true",
         help="Also produce per-group JSON files",
     )
     p.add_argument(
@@ -625,13 +661,22 @@ def build_parser():
         help="Per-command timeout in seconds (default: 10)",
     )
     p.add_argument(
-        "--debug", default=None, action="store_true", help="Enable debug output",
+        "--debug",
+        default=None,
+        action="store_true",
+        help="Enable debug output",
     )
     p.add_argument(
         "--fast",
         default=None,
         action="store_true",
         help="Fast mode: only run teacher→students and students→teacher, skip cross-testing",
+    )
+    p.add_argument(
+        "--dryrun",
+        default=None,
+        action="store_true",
+        help="Print the autograder commands that would be run without executing them",
     )
     return p
 
@@ -652,6 +697,7 @@ _YAML_KEY_MAP = {
     "timeout": "timeout",
     "debug": "debug",
     "fast": "fast",
+    "dryrun": "dryrun",
 }
 
 
@@ -679,6 +725,8 @@ def main():
         args.debug = False
     if args.fast is None:
         args.fast = False
+    if args.dryrun is None:
+        args.dryrun = False
 
     # Validate required options
     missing = []
@@ -709,6 +757,7 @@ def main():
         "jacoco": args.jacoco,
         "timeout": args.timeout,
         "debug": args.debug,
+        "dryrun": args.dryrun,
     }
 
     groups = discover_groups(class_dir)
@@ -758,7 +807,10 @@ def main():
             jacoco=cfg.get("jacoco"),
             timeout=cfg["timeout"],
             debug=cfg["debug"],
+            dryrun=cfg["dryrun"],
         )
+        if data is None and err is None:
+            continue
         if err:
             print(f"  [{gname}] ERROR: {err}")
             continue
@@ -811,7 +863,10 @@ def main():
                 test_dir=gpath,
                 timeout=cfg["timeout"],
                 debug=cfg["debug"],
+                dryrun=cfg["dryrun"],
             )
+            if data is None and err is None:
+                continue
             if err:
                 print(f"  [{gname}] ERROR: {err}")
                 continue
@@ -856,7 +911,10 @@ def main():
                     test_dir=tester_path,
                     timeout=cfg["timeout"],
                     debug=cfg["debug"],
+                    dryrun=cfg["dryrun"],
                 )
+                if data is None and err is None:
+                    continue
                 if err:
                     print(f"    [{tester_name} → {tested_name}] ERROR: {err}")
                     continue
