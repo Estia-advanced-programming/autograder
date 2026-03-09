@@ -163,8 +163,8 @@ def build_java_command(
 def parse_version(version_string):
     """Strip leading 'v' and split into a comparable tuple of ints."""
     v = version_string.strip().lstrip("v")
-    if v.startswith("Pandora@"):
-        v = v[len("Pandora@") :]
+    if v.lower().startswith("pandora@"):
+        v = v[len("pandora@") :]
     try:
         return tuple(int(x) for x in v.split("."))
     except (ValueError, AttributeError):
