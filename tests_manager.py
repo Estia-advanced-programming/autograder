@@ -363,6 +363,7 @@ def expand_source(src, source_index, id_start):
                     t = _make_test(
                         defaults,
                         id=id_start + source_index * 1000 + test_index,
+                        mode=entry.get("mode", defaults.get("mode")),
                         feature=name,
                         result=entry.get("result"),
                         error=entry.get("error"),
