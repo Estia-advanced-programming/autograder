@@ -588,6 +588,11 @@ def build_parser():
         help="Per-command timeout in seconds (default: 10)",
     )
     p.add_argument("--debug", action="store_true", help="Enable debug output")
+    p.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: only run teacher→students and students→teacher, skip cross-testing",
+    )
     return p
 
 
@@ -693,109 +698,116 @@ def main():
                 f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)"
             )
 
-    # ── Self-evaluation (student tests → own Pandora) ────────────────
-    print("\n=== Self-Evaluation (Student Tests → Own Pandora) ===")
-    for gname, gpath in groups:
-        jar = group_jar(gpath)
-        cleaned_ts = group_cleaned_test_suite(gpath)
-        manifest_path = group_manifest(gpath)
-        if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
-            continue
+    fast_mode = args.fast
 
-        if not os.path.isfile(cleaned_ts):
-            print(f"  [{gname}] SKIP: no cleaned test suite available")
-            continue
-
-        print(f"  [{gname}] self-evaluation (using cleaned tests)...")
-
-        data, err = run_autograder(
-            jar=jar,
-            test_suite=cleaned_ts,
-            manifest=manifest_path,
-            test_dir=gpath,
-            timeout=cfg["timeout"],
-            debug=cfg["debug"],
-        )
-        if err:
-            print(f"  [{gname}] ERROR: {err}")
-            continue
-        self_eval[gname] = data
-        print(f"  [{gname}] self-score: {data.get('total_score', 0):.2f}")
-
-    # ── 3.3 Cross-Testing ────────────────────────────────────────────
-    print("\n=== Cross-Testing (Student Tests → Other Pandoras) ===")
-
-    # Build ground truth from teacher evaluation
-    ground_truth = {}  # (tested_group, feature) -> bool
-    for gname in group_names:
-        for feat in all_features:
-            score = teacher_scores.get(gname, {}).get(feat)
-            if score is not None:
-                ground_truth[(gname, feat)] = score >= PASS_THRESHOLD
-
-    # For each tester group, run their cleaned tests against all other groups
-    tester_verdicts = {}  # tester -> {(tested_group, feature): bool}
-    cross_results = {}  # (tester, tested) -> autograder JSON
-
-    for tester_name, tester_path in groups:
-        cleaned_ts = group_cleaned_test_suite(tester_path)
-        if not os.path.isfile(cleaned_ts):
-            continue
-
-        tester_verdicts[tester_name] = {}
-        print(f"  [{tester_name}] cross-testing against other groups...")
-
-        for tested_name, tested_path in groups:
-            if tested_name == tester_name:
-                continue
-            jar = group_jar(tested_path)
-            manifest_path = group_manifest(tested_path)
+    if not fast_mode:
+        # ── Self-evaluation (student tests → own Pandora) ────────────────
+        print("\n=== Self-Evaluation (Student Tests → Own Pandora) ===")
+        for gname, gpath in groups:
+            jar = group_jar(gpath)
+            cleaned_ts = group_cleaned_test_suite(gpath)
+            manifest_path = group_manifest(gpath)
             if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
                 continue
+
+            if not os.path.isfile(cleaned_ts):
+                print(f"  [{gname}] SKIP: no cleaned test suite available")
+                continue
+
+            print(f"  [{gname}] self-evaluation (using cleaned tests)...")
 
             data, err = run_autograder(
                 jar=jar,
                 test_suite=cleaned_ts,
                 manifest=manifest_path,
-                test_dir=tester_path,
+                test_dir=gpath,
                 timeout=cfg["timeout"],
                 debug=cfg["debug"],
             )
             if err:
-                print(f"    [{tester_name} → {tested_name}] ERROR: {err}")
+                print(f"  [{gname}] ERROR: {err}")
                 continue
+            self_eval[gname] = data
+            print(f"  [{gname}] self-score: {data.get('total_score', 0):.2f}")
 
-            cross_results[(tester_name, tested_name)] = data
-            fs = data.get("features_score", {})
-            tested_manifest = group_manifests.get(tested_name, [])
+        # ── 3.3 Cross-Testing ────────────────────────────────────────────
+        print("\n=== Cross-Testing (Student Tests → Other Pandoras) ===")
+
+        # Build ground truth from teacher evaluation
+        ground_truth = {}  # (tested_group, feature) -> bool
+        for gname in group_names:
             for feat in all_features:
-                if feat in set(tested_manifest):
-                    score = fs.get(feat, 0)
-                    tester_verdicts[tester_name][(tested_name, feat)] = (
-                        score >= PASS_THRESHOLD
-                    )
+                score = teacher_scores.get(gname, {}).get(feat)
+                if score is not None:
+                    ground_truth[(gname, feat)] = score >= PASS_THRESHOLD
 
-    # ── Compute metrics ──────────────────────────────────────────────
-    group_metrics = {}
-    for tester_name in group_names:
-        if tester_name not in tester_verdicts:
-            continue
-        metrics = compute_classification_metrics(
-            tester_verdicts[tester_name], ground_truth
-        )
-        group_metrics[tester_name] = metrics
+        # For each tester group, run their cleaned tests against all other groups
+        tester_verdicts = {}  # tester -> {(tested_group, feature): bool}
+        cross_results = {}  # (tester, tested) -> autograder JSON
 
-    # Pairwise agreement
-    pairwise_agreement = {}
-    for tester_name in group_names:
-        if tester_name not in tester_verdicts:
-            continue
-        for tested_name in group_names:
-            if tester_name == tested_name:
+        for tester_name, tester_path in groups:
+            cleaned_ts = group_cleaned_test_suite(tester_path)
+            if not os.path.isfile(cleaned_ts):
                 continue
-            pairwise_agreement[(tester_name, tested_name)] = compute_pairwise_agreement(
-                tester_verdicts[tester_name], ground_truth, tested_name
+
+            tester_verdicts[tester_name] = {}
+            print(f"  [{tester_name}] cross-testing against other groups...")
+
+            for tested_name, tested_path in groups:
+                if tested_name == tester_name:
+                    continue
+                jar = group_jar(tested_path)
+                manifest_path = group_manifest(tested_path)
+                if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
+                    continue
+
+                data, err = run_autograder(
+                    jar=jar,
+                    test_suite=cleaned_ts,
+                    manifest=manifest_path,
+                    test_dir=tester_path,
+                    timeout=cfg["timeout"],
+                    debug=cfg["debug"],
+                )
+                if err:
+                    print(f"    [{tester_name} → {tested_name}] ERROR: {err}")
+                    continue
+
+                cross_results[(tester_name, tested_name)] = data
+                fs = data.get("features_score", {})
+                tested_manifest = group_manifests.get(tested_name, [])
+                for feat in all_features:
+                    if feat in set(tested_manifest):
+                        score = fs.get(feat, 0)
+                        tester_verdicts[tester_name][(tested_name, feat)] = (
+                            score >= PASS_THRESHOLD
+                        )
+
+        # ── Compute metrics ──────────────────────────────────────────────
+        group_metrics = {}
+        for tester_name in group_names:
+            if tester_name not in tester_verdicts:
+                continue
+            metrics = compute_classification_metrics(
+                tester_verdicts[tester_name], ground_truth
             )
+            group_metrics[tester_name] = metrics
+
+        # Pairwise agreement
+        pairwise_agreement = {}
+        for tester_name in group_names:
+            if tester_name not in tester_verdicts:
+                continue
+            for tested_name in group_names:
+                if tester_name == tested_name:
+                    continue
+                pairwise_agreement[(tester_name, tested_name)] = compute_pairwise_agreement(
+                    tester_verdicts[tester_name], ground_truth, tested_name
+                )
+    else:
+        print("\n=== Fast mode: skipping self-evaluation and cross-testing ===")
+        group_metrics = {}
+        pairwise_agreement = {}
 
     # ── Build per-group JSON data ────────────────────────────────────
     group_data = {}
@@ -903,16 +915,17 @@ table thead th:first-child {
             validation_scores,
         )
     )
-    if group_metrics:
-        report_parts.append(
-            md_metrics_table("Test Quality Metrics (Cross-Testing)", group_metrics)
-        )
-    if pairwise_agreement:
-        report_parts.append(
-            md_agreement_heatmap(
-                "Pairwise Agreement Heatmap", group_names, pairwise_agreement
+    if not fast_mode:
+        if group_metrics:
+            report_parts.append(
+                md_metrics_table("Test Quality Metrics (Cross-Testing)", group_metrics)
             )
-        )
+        if pairwise_agreement:
+            report_parts.append(
+                md_agreement_heatmap(
+                    "Pairwise Agreement Heatmap", group_names, pairwise_agreement
+                )
+            )
     report_parts.append(md_summary_table(group_names, group_data))
 
     report_text = "\n".join(report_parts)
@@ -929,15 +942,21 @@ table thead th:first-child {
         d = group_data.get(gname, {})
         short_name = shorten_team_name(gname)
         ts = d.get("teacher_evaluation", {}).get("total_score", 0)
-        ss = d.get("self_evaluation", {}).get("total_score", 0)
-        f1 = d.get("test_quality", {}).get("f1", 0)
         vt = d.get("test_quality", {}).get("valid_tests", 0)
         tt = d.get("test_quality", {}).get("total_tests", 0)
         rm = d.get("test_quality", {}).get("removed_tests", 0)
-        print(
-            f"  {short_name:20s}  teacher={ts:.2f}  self={ss:.2f}  "
-            f"F1={f1:.2f}  tests={vt}/{tt}  removed={rm}"
-        )
+        if fast_mode:
+            print(
+                f"  {short_name:20s}  teacher={ts:.2f}  "
+                f"tests={vt}/{tt}  removed={rm}"
+            )
+        else:
+            ss = d.get("self_evaluation", {}).get("total_score", 0)
+            f1 = d.get("test_quality", {}).get("f1", 0)
+            print(
+                f"  {short_name:20s}  teacher={ts:.2f}  self={ss:.2f}  "
+                f"F1={f1:.2f}  tests={vt}/{tt}  removed={rm}"
+            )
 
 
 if __name__ == "__main__":
