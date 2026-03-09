@@ -103,7 +103,14 @@ def load_feature_whitelist():
 
 VALID_MODES = {"feature", "full"}
 DATA_SECTIONS = {"features", "metadata", "parameters", "errors"}
-FILE_LEVEL_KEYS = {"desc", "mode", "file", "option", "group", "milestone"} | DATA_SECTIONS
+FILE_LEVEL_KEYS = {
+    "desc",
+    "mode",
+    "file",
+    "option",
+    "group",
+    "milestone",
+} | DATA_SECTIONS
 
 
 def load_test_source(path):
@@ -140,13 +147,19 @@ def validate_source(src, path, whitelist=None):
 
     # --- validate each data section ---
     if "features" in src:
-        _validate_map_section(src["features"], "features", mode, path, whitelist, errors, warnings)
+        _validate_map_section(
+            src["features"], "features", mode, path, whitelist, errors, warnings
+        )
 
     if "metadata" in src:
-        _validate_map_section(src["metadata"], "metadata", mode, path, whitelist, errors, warnings)
+        _validate_map_section(
+            src["metadata"], "metadata", mode, path, whitelist, errors, warnings
+        )
 
     if "parameters" in src:
-        _validate_map_section(src["parameters"], "parameters", mode, path, whitelist, errors, warnings)
+        _validate_map_section(
+            src["parameters"], "parameters", mode, path, whitelist, errors, warnings
+        )
 
     if "errors" in src:
         _validate_errors_section(src["errors"], path, errors, warnings)
@@ -154,7 +167,9 @@ def validate_source(src, path, whitelist=None):
     return errors, warnings
 
 
-def _validate_map_section(section, section_name, mode, path, whitelist, errors, warnings):
+def _validate_map_section(
+    section, section_name, mode, path, whitelist, errors, warnings
+):
     """Validate a features/metadata/parameters map section."""
     if not isinstance(section, dict):
         errors.append(f"{path}: '{section_name}' must be a mapping")
@@ -202,7 +217,9 @@ def _validate_entry_list(entries, ctx, errors):
         has_result = "result" in entry
         has_error = "error" in entry
         if has_result and has_error:
-            errors.append(f"{tag}: entry has both 'result' and 'error' (need exactly one)")
+            errors.append(
+                f"{tag}: entry has both 'result' and 'error' (need exactly one)"
+            )
         elif not has_result and not has_error:
             errors.append(f"{tag}: entry missing 'result' (or 'error' for error tests)")
 
@@ -211,7 +228,9 @@ def _validate_result_value(value, ctx, errors):
     """Validate a scalar result value (full-mode)."""
     if isinstance(value, (str, int, float)):
         return
-    errors.append(f"{ctx}: expected a scalar result (str/int/float), got {type(value).__name__}")
+    errors.append(
+        f"{ctx}: expected a scalar result (str/int/float), got {type(value).__name__}"
+    )
 
 
 def _validate_errors_section(section, path, errors, warnings):
@@ -247,6 +266,160 @@ def gather_sources(args):
         fatal("--profile not yet implemented (Phase 3)")
     # Default: all .yml in tests_dir
     return collect_yaml_files(tests_dir, ".")
+
+
+# ─── Expansion engine ─────────────────────────────────────────────────────
+
+
+def _file_defaults(src):
+    """Extract file-level default fields from a YAML source."""
+    defaults = {}
+    for key in ("mode", "file", "option", "group", "milestone"):
+        if key in src:
+            defaults[key] = src[key]
+    return defaults
+
+
+def _make_test(defaults, **overrides):
+    """Build a flat test dict from defaults + overrides. Omit None values."""
+    test = {}
+    merged = {**defaults, **overrides}
+    for key in ("id", "milestone", "mode", "feature", "metadata", "parameter",
+                "file", "files", "option", "group", "result", "error"):
+        if key in merged and merged[key] is not None:
+            test[key] = merged[key]
+    return test
+
+
+def expand_source(src, source_index, id_start):
+    """Expand a YAML source dict into a list of flat test dicts."""
+    defaults = _file_defaults(src)
+    tests = []
+    test_index = 0
+
+    if "features" in src:
+        for name, value in src["features"].items():
+            if isinstance(value, list):
+                # feature-mode: list of entries
+                for entry in value:
+                    file_val = entry.get("file", defaults.get("file"))
+                    t = _make_test(
+                        defaults,
+                        id=id_start + source_index * 1000 + test_index,
+                        feature=name,
+                        result=entry.get("result"),
+                        error=entry.get("error"),
+                        option=entry.get("option", defaults.get("option")),
+                        group=entry.get("group", defaults.get("group")),
+                        milestone=entry.get("milestone", defaults.get("milestone")),
+                    )
+                    # file vs files
+                    if isinstance(file_val, list):
+                        t["files"] = file_val
+                        t.pop("file", None)
+                    else:
+                        t["file"] = file_val
+                    test_index += 1
+                    tests.append(t)
+            else:
+                # full-mode: scalar value
+                t = _make_test(
+                    defaults,
+                    id=id_start + source_index * 1000 + test_index,
+                    feature=name,
+                    result=value,
+                )
+                test_index += 1
+                tests.append(t)
+
+    if "metadata" in src:
+        for name, value in src["metadata"].items():
+            if isinstance(value, list):
+                for entry in value:
+                    file_val = entry.get("file", defaults.get("file"))
+                    t = _make_test(
+                        defaults,
+                        id=id_start + source_index * 1000 + test_index,
+                        mode=entry.get("mode", "feature"),
+                        metadata=name,
+                        result=entry.get("result"),
+                        error=entry.get("error"),
+                        option=entry.get("option", defaults.get("option")),
+                        group=entry.get("group", defaults.get("group")),
+                        milestone=entry.get("milestone", defaults.get("milestone")),
+                    )
+                    if isinstance(file_val, list):
+                        t["files"] = file_val
+                        t.pop("file", None)
+                    else:
+                        t["file"] = file_val
+                    test_index += 1
+                    tests.append(t)
+            else:
+                # full-mode metadata scalar
+                t = _make_test(
+                    defaults,
+                    id=id_start + source_index * 1000 + test_index,
+                    metadata=name,
+                    result=value,
+                )
+                test_index += 1
+                tests.append(t)
+
+    if "parameters" in src:
+        for name, value in src["parameters"].items():
+            if isinstance(value, list):
+                for entry in value:
+                    file_val = entry.get("file", defaults.get("file"))
+                    t = _make_test(
+                        defaults,
+                        id=id_start + source_index * 1000 + test_index,
+                        parameter=name,
+                        result=entry.get("result"),
+                        error=entry.get("error"),
+                        option=entry.get("option", defaults.get("option")),
+                        group=entry.get("group", defaults.get("group")),
+                        milestone=entry.get("milestone", defaults.get("milestone")),
+                    )
+                    if isinstance(file_val, list):
+                        t["files"] = file_val
+                        t.pop("file", None)
+                    else:
+                        t["file"] = file_val
+                    test_index += 1
+                    tests.append(t)
+            else:
+                t = _make_test(
+                    defaults,
+                    id=id_start + source_index * 1000 + test_index,
+                    parameter=name,
+                    result=value,
+                )
+                test_index += 1
+                tests.append(t)
+
+    if "errors" in src:
+        for entry in src["errors"]:
+            file_val = entry.get("file", defaults.get("file"))
+            t = _make_test(
+                defaults,
+                id=id_start + source_index * 1000 + test_index,
+                mode=entry.get("mode", "feature"),
+                feature=entry.get("feature"),
+                error=entry["error"],
+                option=entry.get("option", defaults.get("option")),
+                group=entry.get("group", defaults.get("group")),
+                milestone=entry.get("milestone", defaults.get("milestone")),
+            )
+            if isinstance(file_val, list):
+                t["files"] = file_val
+                t.pop("file", None)
+            else:
+                t["file"] = file_val
+            test_index += 1
+            tests.append(t)
+
+    return tests
 
 
 # ─── CLI ───────────────────────────────────────────────────────────────────
@@ -374,7 +547,9 @@ def cmd_check(args):
         for w in warns:
             print(f"  WARN:  {w}", file=sys.stderr)
 
-    print(f"\nChecked {len(files)} file(s): {total_errors} error(s), {total_warnings} warning(s)")
+    print(
+        f"\nChecked {len(files)} file(s): {total_errors} error(s), {total_warnings} warning(s)"
+    )
     if total_errors:
         sys.exit(1)
 
