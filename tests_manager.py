@@ -262,10 +262,67 @@ def gather_sources(args):
             files.extend(collect_yaml_files(s, "."))
         return sorted(set(files))
     if getattr(args, "profile", None):
-        # Profile resolution — Phase 3, stub for now
-        fatal("--profile not yet implemented (Phase 3)")
+        return resolve_profile(args.profile, tests_dir)
     # Default: all .yml in tests_dir
     return collect_yaml_files(tests_dir, ".")
+
+
+# ─── Profile resolution ───────────────────────────────────────────────────
+
+
+def load_profile(path):
+    """Load a profile YAML file. Returns dict with include/exclude/features."""
+    data = load_yaml(path)
+    if not isinstance(data, dict):
+        fatal(f"{path}: profile must be a YAML mapping")
+    if "include" not in data:
+        fatal(f"{path}: profile must have an 'include' list")
+    if not isinstance(data["include"], list):
+        fatal(f"{path}: 'include' must be a list")
+    return data
+
+
+def resolve_profile(profile_path, tests_dir):
+    """Resolve a profile into a sorted list of YAML source file paths."""
+    profile = load_profile(profile_path)
+
+    # Collect included files
+    files = []
+    for entry in profile["include"]:
+        files.extend(collect_yaml_files(entry, tests_dir))
+
+    # Apply excludes
+    excludes = profile.get("exclude", [])
+    if excludes:
+        excluded = set()
+        for ex in excludes:
+            excluded.update(collect_yaml_files(ex, tests_dir))
+        files = [f for f in files if f not in excluded]
+
+    return sorted(set(files))
+
+
+def profile_feature_filter(profile_path):
+    """Return the features filter list from a profile, or None."""
+    if not profile_path:
+        return None
+    profile = load_profile(profile_path)
+    features = profile.get("features")
+    if features and isinstance(features, list):
+        return set(features)
+    return None
+
+
+def filter_tests_by_features(tests, allowed_features):
+    """Keep only tests whose feature/metadata/group is in allowed_features."""
+    if not allowed_features:
+        return tests
+    filtered = []
+    for t in tests:
+        key = t.get("group") or t.get("feature") or t.get("metadata") or t.get("parameter")
+        if key in allowed_features:
+            filtered.append(t)
+    return filtered
 
 
 # ─── Expansion engine ─────────────────────────────────────────────────────
