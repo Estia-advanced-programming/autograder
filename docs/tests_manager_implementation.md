@@ -11,10 +11,10 @@ Tracking file for incremental implementation. Each phase is a commit checkpoint.
 - [x] Runnable: `python tests_manager.py --help` works, subcommands print stubs
 
 ## Phase 1 — YAML Loading & Validation
-- [ ] `load_test_source(path)` — parse one `.yml`, return dict
-- [ ] `validate_source(src, path)` — schema checks (mode, conditionals, result/error)
-- [ ] Load `features-whitelist.json` for non-fatal warnings
-- [ ] `check` command wired: validates selected files, prints summary
+- [x] `load_test_source(path)` — parse one `.yml`, return dict
+- [x] `validate_source(src, path)` — schema checks (mode, conditionals, result/error)
+- [x] Load `features-whitelist.json` for non-fatal warnings
+- [x] `check` command wired: validates selected files, prints summary
 
 ## Phase 2 — Expansion Engine
 - [ ] `expand_source(src, source_index, id_counter)` → list of flat test dicts
