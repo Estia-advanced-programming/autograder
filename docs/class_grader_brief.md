@@ -39,21 +39,60 @@ The teacher also provides:
 ### 2.2 CLI Interface
 
 ```
-python class_grader.py [options]
+python class_grader.py [-C config.yml] [-d <class_dir> -t <teacher_tests> -r <ref_jar>] [options]
 ```
 
 | Flag | Argument | Required | Description |
 |------|----------|----------|-------------|
-| `-d` | `<path>` | yes | Root directory containing group subfolders |
-| `-t` | `<path>` | yes | Path to the teacher's reference test suite |
-| `-r` | `<path>` | yes | Path to the teacher's reference Pandora JAR |
+| `-C` / `--config` | `<path>` | no | Path to a YAML configuration file (CLI options override config values) |
+| `-d` | `<path>` | yes* | Root directory containing group subfolders |
+| `-t` | `<path>` | yes* | Path to the teacher's reference test suite |
+| `-r` | `<path>` | yes* | Path to the teacher's reference Pandora JAR |
+| `-W` / `--teacher-workdir` | `<path>` | no | Teacher project root (where teacher test file paths resolve from). Defaults to parent directory of the teacher test suite. |
 | `-o` | `<path>` | no | Output directory for reports (default: current directory) |
 | `-c` / `--coverage` | — | no | Enable JaCoCo coverage analysis |
 | `-j` | `<path>` | no | Path to JaCoCo agent JAR |
 | `--json` | — | no | Also produce per-group JSON files |
+| `-T` / `--timeout` | `<int>` | no | Per-command timeout in seconds (default: 10) |
+| `--debug` | — | no | Enable debug output |
+| `--fast` | — | no | Fast mode: only run teacher→students and students→teacher, skip cross-testing |
+
+\* Required options (`-d`, `-t`, `-r`) can be provided via CLI arguments, the YAML config file, or a combination of both. CLI arguments always override config file values.
 
 Group subfolder names are used as team names throughout all reports.
 
+### 2.3 Optional YAML Configuration
+
+Instead of (or in addition to) command-line arguments, options can be provided via a YAML file passed with `-C` / `--config`. All keys are optional — any value set on the CLI takes precedence over the config file.
+
+```yml
+dir: ../2026/pandora-2026-submissions
+tests: test/testSuite.json
+ref: path/to/reference.jar
+teacher_workdir: path/to/teacher/project
+output: ./reports
+coverage: true
+jacoco: path/to/jacoco.jar
+json: true
+timeout: 15
+debug: false
+fast: true
+```
+
+**Example usage:**
+
+```bash
+# All options from config
+python class_grader.py -C config.yml
+
+# Config with CLI override (e.g. disable fast mode for a full run)
+python class_grader.py -C config.yml --timeout 20
+
+# Partial config, remaining required options from CLI
+python class_grader.py -C config.yml -r path/to/ref.jar
+```
+
+Requires the `pyyaml` package (`pip install pyyaml`). Only needed when `--config` is used.
 ---
 
 ## 3. Evaluation Runs

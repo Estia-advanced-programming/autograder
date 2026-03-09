@@ -16,6 +16,11 @@ import os
 import subprocess
 import sys
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 PASS_THRESHOLD = 0.9
 PARTIAL_THRESHOLD = 0.5
 
@@ -546,19 +551,49 @@ def md_summary_table(group_names, group_data):
 # ─── CLI ────────────────────────────────────────────────────────────────────
 
 
+def load_yaml_config(path):
+    """Load a YAML configuration file and return a dict of settings.
+
+    Raises SystemExit with a clear message on errors.
+    """
+    if yaml is None:
+        print("Error: PyYAML is required to use --config. Install it with: pip install pyyaml")
+        sys.exit(1)
+
+    try:
+        with open(path, "r") as f:
+            cfg = yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"Error: config file not found: {path}")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        print(f"Error: invalid YAML in {path}: {e}")
+        sys.exit(1)
+
+    if not isinstance(cfg, dict):
+        print(f"Error: config file must be a YAML mapping, got {type(cfg).__name__}")
+        sys.exit(1)
+
+    return cfg
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         description="Class Grader — batch autograder orchestration and analysis.",
-        usage="python class_grader.py -d <class_dir> -t <teacher_tests> -r <ref_jar> [options]",
+        usage="python class_grader.py [-C config.yml] [-d <class_dir> -t <teacher_tests> -r <ref_jar>] [options]",
     )
     p.add_argument(
-        "-d", "--dir", required=True, help="Root directory containing group subfolders"
+        "-C", "--config", default=None,
+        help="Path to a YAML configuration file (CLI options override config values)",
     )
     p.add_argument(
-        "-t", "--tests", required=True, help="Path to teacher's reference test suite"
+        "-d", "--dir", default=None, help="Root directory containing group subfolders"
     )
     p.add_argument(
-        "-r", "--ref", required=True, help="Path to teacher's reference Pandora JAR"
+        "-t", "--tests", default=None, help="Path to teacher's reference test suite"
+    )
+    p.add_argument(
+        "-r", "--ref", default=None, help="Path to teacher's reference Pandora JAR"
     )
     p.add_argument(
         "-W",
@@ -570,26 +605,31 @@ def build_parser():
     p.add_argument(
         "-o",
         "--output",
-        default=".",
+        default=None,
         help="Output directory for reports (default: current dir)",
     )
     p.add_argument(
-        "-c", "--coverage", action="store_true", help="Enable JaCoCo coverage analysis"
+        "-c", "--coverage", default=None, action="store_true",
+        help="Enable JaCoCo coverage analysis",
     )
     p.add_argument("-j", "--jacoco", default=None, help="Path to JaCoCo agent JAR")
     p.add_argument(
-        "--json", action="store_true", help="Also produce per-group JSON files"
+        "--json", default=None, action="store_true",
+        help="Also produce per-group JSON files",
     )
     p.add_argument(
         "-T",
         "--timeout",
         type=int,
-        default=10,
+        default=None,
         help="Per-command timeout in seconds (default: 10)",
     )
-    p.add_argument("--debug", action="store_true", help="Enable debug output")
+    p.add_argument(
+        "--debug", default=None, action="store_true", help="Enable debug output",
+    )
     p.add_argument(
         "--fast",
+        default=None,
         action="store_true",
         help="Fast mode: only run teacher→students and students→teacher, skip cross-testing",
     )
@@ -599,9 +639,57 @@ def build_parser():
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 
+# Mapping from YAML keys to argparse dest names
+_YAML_KEY_MAP = {
+    "dir": "dir",
+    "tests": "tests",
+    "ref": "ref",
+    "teacher_workdir": "teacher_workdir",
+    "output": "output",
+    "coverage": "coverage",
+    "jacoco": "jacoco",
+    "json": "json",
+    "timeout": "timeout",
+    "debug": "debug",
+    "fast": "fast",
+}
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    # ── Merge YAML config with CLI args (CLI wins) ───────────────────
+    if args.config:
+        file_cfg = load_yaml_config(args.config)
+        for yaml_key, attr in _YAML_KEY_MAP.items():
+            if yaml_key in file_cfg and getattr(args, attr) is None:
+                setattr(args, attr, file_cfg[yaml_key])
+
+    # Apply defaults for optional args not set by CLI or config
+    if args.output is None:
+        args.output = "."
+    if args.timeout is None:
+        args.timeout = 10
+    if args.coverage is None:
+        args.coverage = False
+    if args.json is None:
+        args.json = False
+    if args.debug is None:
+        args.debug = False
+    if args.fast is None:
+        args.fast = False
+
+    # Validate required options
+    missing = []
+    if not args.dir:
+        missing.append("--dir / -d (or 'dir' in config)")
+    if not args.tests:
+        missing.append("--tests / -t (or 'tests' in config)")
+    if not args.ref:
+        missing.append("--ref / -r (or 'ref' in config)")
+    if missing:
+        parser.error("the following arguments are required: " + ", ".join(missing))
 
     class_dir = os.path.abspath(args.dir)
     teacher_tests = os.path.abspath(args.tests)
@@ -801,8 +889,10 @@ def main():
             for tested_name in group_names:
                 if tester_name == tested_name:
                     continue
-                pairwise_agreement[(tester_name, tested_name)] = compute_pairwise_agreement(
-                    tester_verdicts[tester_name], ground_truth, tested_name
+                pairwise_agreement[(tester_name, tested_name)] = (
+                    compute_pairwise_agreement(
+                        tester_verdicts[tester_name], ground_truth, tested_name
+                    )
                 )
     else:
         print("\n=== Fast mode: skipping self-evaluation and cross-testing ===")
