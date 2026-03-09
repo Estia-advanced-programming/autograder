@@ -634,7 +634,52 @@ def cmd_build(args):
 def cmd_list(args):
     """List available YAML source files and profiles."""
     require_yaml()
-    print("list: not yet implemented (Phase 5)")
+    tests_dir = args.tests_dir
+
+    # List test sources
+    sources = collect_yaml_files(tests_dir, ".")
+    print(f"Test sources ({tests_dir}):")
+    if not sources:
+        print("  (none)")
+    else:
+        # Group by immediate subdirectory
+        groups = {}
+        for path in sources:
+            rel = os.path.relpath(path, tests_dir)
+            parts = rel.split(os.sep)
+            group = parts[0] if len(parts) > 1 else "."
+            groups.setdefault(group, []).append(rel)
+        for group in sorted(groups):
+            print(f"  {group}/")
+            for rel in groups[group]:
+                # Count tests in file
+                src = load_test_source(path=resolve_path(rel, tests_dir))
+                count = sum(
+                    len(v) if isinstance(v, list) else 1
+                    for section in DATA_SECTIONS
+                    if section in src
+                    for v in (
+                        src[section].values() if isinstance(src[section], dict)
+                        else [src[section]]
+                    )
+                )
+                print(f"    {rel}  ({count} test(s))")
+
+    # List profiles
+    profiles_dir = os.path.join(os.path.dirname(tests_dir.rstrip(os.sep)), "profiles")
+    if os.path.isdir(profiles_dir):
+        profiles = sorted(glob.glob(os.path.join(profiles_dir, "*.yml")))
+        if profiles:
+            print(f"\nProfiles ({profiles_dir}):")
+            for p in profiles:
+                desc = ""
+                try:
+                    data = load_yaml(p)
+                    if isinstance(data, dict) and "desc" in data:
+                        desc = f"  — {data['desc']}"
+                except SystemExit:
+                    pass
+                print(f"  {os.path.basename(p)}{desc}")
 
 
 def cmd_check(args):
