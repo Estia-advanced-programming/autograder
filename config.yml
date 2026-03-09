@@ -1,5 +1,6 @@
 dir: ../2026/pandora-2026-submissions/
-tests: ../2026/pandora-2026-the_awesome_teachers_2026/test/testSuite.json
+tests: ./test/testSuite.json
+testdir: ./test/
 ref: ../2026/pandora-2026-the_awesome_teachers_2026/target/pandora.jar
 output: reports
 fast: true
