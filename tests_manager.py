@@ -568,13 +568,67 @@ def build_parser():
     return p
 
 
-# ─── Command stubs ─────────────────────────────────────────────────────────
+# ─── Build & output ────────────────────────────────────────────────────────
+
+
+def write_test_suite(tests, output_path):
+    """Write the test suite as a JSON array."""
+    with open(output_path, "w") as f:
+        json.dump(tests, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    print(f"Wrote {len(tests)} test(s) to {output_path}")
+
+
+def build_test_suite(files, id_start, feature_filter=None):
+    """Load, expand, and merge all source files into a test list."""
+    all_tests = []
+    for source_index, path in enumerate(files):
+        src = load_test_source(path)
+        tests = expand_source(src, source_index, id_start)
+        all_tests.extend(tests)
+
+    if feature_filter:
+        all_tests = filter_tests_by_features(all_tests, feature_filter)
+
+    return all_tests
+
+
+def print_build_summary(files, tests):
+    """Print a dry-run summary of the build."""
+    print(f"Sources: {len(files)} file(s)")
+    # Count per source
+    ids_by_file = {}
+    for t in tests:
+        tid = t["id"]
+        source_idx = (tid % 1000000) // 1000
+        if source_idx < len(files):
+            fname = os.path.basename(files[source_idx])
+        else:
+            fname = "?"
+        ids_by_file.setdefault(fname, 0)
+        ids_by_file[fname] += 1
+    for fname, count in ids_by_file.items():
+        print(f"  {fname}: {count} test(s)")
+    print(f"Total: {len(tests)} test(s)")
+
+
+# ─── Commands ──────────────────────────────────────────────────────────────
 
 
 def cmd_build(args):
     """Build testSuite.json from YAML sources."""
     require_yaml()
-    print("build: not yet implemented (Phase 2+)")
+    files = gather_sources(args)
+    if not files:
+        fatal("no YAML source files found")
+
+    feature_filter = profile_feature_filter(args.profile) if args.profile else None
+    tests = build_test_suite(files, args.id_start, feature_filter)
+
+    if args.dry_run:
+        print_build_summary(files, tests)
+    else:
+        write_test_suite(tests, args.output)
 
 
 def cmd_list(args):
