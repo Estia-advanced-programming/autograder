@@ -682,6 +682,51 @@ def cmd_list(args):
                 print(f"  {os.path.basename(p)}{desc}")
 
 
+def validate_file_references(src, path, errors, warnings):
+    """Check that all file paths in a source exist on disk."""
+    def _check_file(file_val, ctx):
+        if isinstance(file_val, list):
+            for f in file_val:
+                if not os.path.exists(f):
+                    errors.append(f"{ctx}: file not found: {f}")
+        elif isinstance(file_val, str):
+            if not os.path.exists(file_val):
+                errors.append(f"{ctx}: file not found: {file_val}")
+
+    # File-level default
+    if "file" in src:
+        _check_file(src["file"], f"{path}: file")
+
+    for section in ("features", "metadata", "parameters"):
+        if section not in src or not isinstance(src[section], dict):
+            continue
+        for name, value in src[section].items():
+            if isinstance(value, list):
+                for i, entry in enumerate(value):
+                    if isinstance(entry, dict) and "file" in entry:
+                        _check_file(entry["file"], f"{path}: {section}.{name}[{i}]")
+
+    if "errors" in src and isinstance(src["errors"], list):
+        for i, entry in enumerate(src["errors"]):
+            if isinstance(entry, dict) and "file" in entry:
+                _check_file(entry["file"], f"{path}: errors[{i}]")
+
+
+def validate_duplicate_features(src, path, warnings):
+    """Warn if the same feature name appears in multiple sections."""
+    seen = {}
+    for section in ("features", "metadata", "parameters"):
+        if section not in src or not isinstance(src[section], dict):
+            continue
+        for name in src[section]:
+            if name in seen:
+                warnings.append(
+                    f"{path}: '{name}' appears in both '{seen[name]}' and '{section}'"
+                )
+            else:
+                seen[name] = section
+
+
 def cmd_check(args):
     """Validate YAML source files."""
     require_yaml()
@@ -696,6 +741,11 @@ def cmd_check(args):
     for path in files:
         src = load_test_source(path)
         errs, warns = validate_source(src, path, whitelist)
+
+        # Phase 6: file-reference and duplicate checks
+        validate_file_references(src, path, errs, warns)
+        validate_duplicate_features(src, path, warns)
+
         total_errors += len(errs)
         total_warnings += len(warns)
         for e in errs:
