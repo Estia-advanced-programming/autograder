@@ -319,7 +319,12 @@ def filter_tests_by_features(tests, allowed_features):
         return tests
     filtered = []
     for t in tests:
-        key = t.get("group") or t.get("feature") or t.get("metadata") or t.get("parameter")
+        key = (
+            t.get("group")
+            or t.get("feature")
+            or t.get("metadata")
+            or t.get("parameter")
+        )
         if key in allowed_features:
             filtered.append(t)
     return filtered
@@ -341,8 +346,20 @@ def _make_test(defaults, **overrides):
     """Build a flat test dict from defaults + overrides. Omit None values."""
     test = {}
     merged = {**defaults, **overrides}
-    for key in ("id", "milestone", "mode", "feature", "metadata", "parameter",
-                "file", "files", "option", "group", "result", "error"):
+    for key in (
+        "id",
+        "milestone",
+        "mode",
+        "feature",
+        "metadata",
+        "parameter",
+        "file",
+        "files",
+        "option",
+        "group",
+        "result",
+        "error",
+    ):
         if key in merged and merged[key] is not None:
             test[key] = merged[key]
     return test
@@ -660,7 +677,8 @@ def cmd_list(args):
                     for section in DATA_SECTIONS
                     if section in src
                     for v in (
-                        src[section].values() if isinstance(src[section], dict)
+                        src[section].values()
+                        if isinstance(src[section], dict)
                         else [src[section]]
                     )
                 )
@@ -685,6 +703,7 @@ def cmd_list(args):
 
 def validate_file_references(src, path, errors, warnings):
     """Check that all file paths in a source exist on disk."""
+
     def _check_file(file_val, ctx):
         if isinstance(file_val, list):
             for f in file_val:
