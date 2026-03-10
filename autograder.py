@@ -547,28 +547,82 @@ def tally_features(feature_scores, tests, all_tests, implemented_features):
     }
 
 
+def tally_tests(tests, all_tests, implemented_features):
+    """Count individual tests by validation status.
+
+    Returns dict with keys: validated, almost, missed, not_implemented, total.
+    Tests filtered out by the manifest count as not_implemented.
+    """
+    validated = almost = missed = not_implemented = 0
+    for t in tests:
+        actual = str(t.get("actual_result", ""))
+        if "not found" in actual:
+            not_implemented += 1
+        elif t["score"] >= 0.9:
+            validated += 1
+        elif t["score"] >= 0.8:
+            almost += 1
+        else:
+            missed += 1
+
+    # Count tests filtered out by the manifest
+    features_set = set(implemented_features)
+    filtered_out = sum(1 for t in all_tests if test_category(t) not in features_set)
+    not_implemented += filtered_out
+
+    return {
+        "validated": validated,
+        "almost": almost,
+        "missed": missed,
+        "not_implemented": not_implemented,
+        "total": len(tests) + filtered_out,
+    }
+
+
 # ─── Report generators ─────────────────────────────────────────────────────
 
 
-def report_summary(feature_scores, tally):
-    """One line per feature with badge."""
-    lines = []
-    max_len = max((len(k) for k in feature_scores), default=0)
-    for feat, score in feature_scores.items():
-        lines.append(f"{feat:<{max_len}}  {badge(score)}")
-    lines.append("")
-    lines.append(
+def _tally_line(tally, label):
+    return (
+        f"{label}: "
         f"🟢 {tally['validated']} validated  "
         f"🟡 {tally['almost']} almost  "
         f"🔴 {tally['missed']} missed  "
         f"⚪ {tally['not_implemented']} not implemented  "
         f"(total: {tally['total']})"
     )
+
+
+def report_summary(feature_scores, tally, test_tally):
+    """One line per feature with badge."""
+    lines = []
+    max_len = max((len(k) for k in feature_scores), default=0)
+    for feat, score in feature_scores.items():
+        lines.append(f"{feat:<{max_len}}  {badge(score)}")
+    lines.append("")
+    lines.append(_tally_line(tally, "Features"))
+    lines.append(_tally_line(test_tally, "Tests"))
     return "\n".join(lines)
 
 
+def _tally_md(tally):
+    return (
+        f"🟢 {tally['validated']} validated · "
+        f"🟡 {tally['almost']} almost · "
+        f"🔴 {tally['missed']} missed · "
+        f"⚪ {tally['not_implemented']} not implemented · "
+        f"**{tally['total']}** total"
+    )
+
+
 def report_markdown(
-    feature_scores, tests, milestone_scores, total_score, version_info, tally
+    feature_scores,
+    tests,
+    milestone_scores,
+    total_score,
+    version_info,
+    tally,
+    test_tally,
 ):
     """Full Markdown report."""
     lines = []
@@ -584,14 +638,10 @@ def report_markdown(
     lines.append(f"**Total Score**: {total_score:.2f}")
     lines.append("")
 
-    # Feature tally
-    lines.append(
-        f"🟢 {tally['validated']} validated · "
-        f"🟡 {tally['almost']} almost · "
-        f"🔴 {tally['missed']} missed · "
-        f"⚪ {tally['not_implemented']} not implemented · "
-        f"**{tally['total']}** total"
-    )
+    # Tallies
+    lines.append(f"**Features**: {_tally_md(tally)}")
+    lines.append("")
+    lines.append(f"**Tests**: {_tally_md(test_tally)}")
     lines.append("")
 
     # Feature scores
@@ -640,6 +690,7 @@ def report_json(
     version_info,
     elapsed,
     tally,
+    test_tally,
 ):
     """Build the JSON output dict."""
     data = {
@@ -651,6 +702,7 @@ def report_json(
         "milestone_scores": milestone_scores,
         "total_score": total_score,
         "tally": tally,
+        "test_tally": test_tally,
         "features": implemented_features,
         "features_score": feature_scores,
         "tests_by_milestone": group_by_milestone(tests),
@@ -959,6 +1011,7 @@ def main():
     milestone_scores = aggregate_milestone_scores(filtered)
     total_score = average_score(filtered)
     tally = tally_features(feature_scores, filtered, test_suite, implemented_features)
+    test_tally = tally_tests(filtered, test_suite, implemented_features)
 
     # ── Determine output mode ─────────────────────────────────────────
     fmt = args.format
@@ -971,7 +1024,7 @@ def main():
 
     # ── Generate output ───────────────────────────────────────────────
     if fmt == "summary":
-        output_text = report_summary(feature_scores, tally)
+        output_text = report_summary(feature_scores, tally, test_tally)
     elif fmt == "json":
         data = report_json(
             feature_scores,
@@ -982,11 +1035,18 @@ def main():
             version_info,
             elapsed,
             tally,
+            test_tally,
         )
         output_text = json.dumps(data, indent=2, default=str)
     else:
         output_text = report_markdown(
-            feature_scores, filtered, milestone_scores, total_score, version_info, tally
+            feature_scores,
+            filtered,
+            milestone_scores,
+            total_score,
+            version_info,
+            tally,
+            test_tally,
         )
 
     # ── Write or print ────────────────────────────────────────────────
