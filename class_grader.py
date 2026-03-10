@@ -547,28 +547,48 @@ def md_agreement_heatmap(title, group_names, pairwise):
     return "\n".join(lines)
 
 
+def _fmt_tally(tally):
+    return (
+        f"\U0001f7e2{tally['validated']} "
+        f"\U0001f7e1{tally['almost']} "
+        f"\U0001f534{tally['missed']} "
+        f"\u26aa{tally['not_implemented']}"
+    )
+
+
 def md_summary_table(group_names, group_data):
     """Per-group summary table."""
     lines = ["## Class Summary", ""]
     lines.append(
-        "| Team | Version | Teacher Score | Self Score | Test Quality (F1) | Valid Tests | Removed |"
+        "| Team | Version | Teacher Score "
+        "| Features (\U0001f7e2/\U0001f7e1/\U0001f534/\u26aa) "
+        "| Tests (\U0001f7e2/\U0001f7e1/\U0001f534/\u26aa) "
+        "| Test Quality (F1) | Valid Tests | Removed |"
     )
     lines.append(
-        "|------|---------|---------------|------------|-------------------|-------------|---------|"
+        "|------|---------|---------------"
+        "|------------------"
+        "|------------------"
+        "|-------------------|-------------|---------|"
     )
     for gname in group_names:
         d = group_data.get(gname, {})
         short_name = shorten_team_name(gname)
         version = d.get("version", "?")
         teacher_score = d.get("teacher_evaluation", {}).get("total_score", 0)
-        self_score = d.get("self_evaluation", {}).get("total_score", 0)
         tq = d.get("test_quality", {})
         f1 = tq.get("f1", 0)
         valid = tq.get("valid_tests", 0)
         total = tq.get("total_tests", 0)
         removed = tq.get("removed_tests", 0)
+        ft = d.get("feature_tally", {})
+        tt = d.get("test_tally", {})
+        feat_cell = _fmt_tally(ft) if ft else ""
+        test_cell = _fmt_tally(tt) if tt else ""
         lines.append(
-            f"| {short_name} | {version} | {teacher_score:.2f} | {self_score:.2f} "
+            f"| {short_name} | {version} | {teacher_score:.2f} "
+            f"| {feat_cell} "
+            f"| {test_cell} "
             f"| {f1:.2f} | {valid}/{total} | {removed} |"
         )
     lines.append("")
@@ -816,29 +836,37 @@ def main():
             continue
         teacher_eval[gname] = data
         teacher_scores[gname] = extract_feature_scores(data, all_features, mfeats)
-        print(f"  [{gname}] total: {data.get('total_score', 0):.2f}")
-
-    # ── 3.2 Student Tests → Teacher Pandora (validation) ─────────────
-    print("\n=== Student Tests → Teacher Pandora (validation) ===")
-    for gname, gpath in groups:
-        ts = group_test_suite(gpath)
-        if not os.path.isfile(ts):
-            print(f"  [{gname}] SKIP: no testSuite.json")
-            continue
-
-        print(f"  [{gname}] validating test suite...")
-        data, valid, invalid, removed = validate_test_suite(gname, gpath, ref_jar, cfg)
-        validation_results[gname] = (data, valid, invalid, removed)
-        if data:
-            print(
-                f"  [{gname}] valid: {len(valid)}, invalid: {len(invalid)}, removed: {len(removed)}"
-            )
-        elif removed:
-            print(
-                f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)"
-            )
+        ft = data.get("tally", {})
+        tt = data.get("test_tally", {})
+        print(
+            f"  [{gname}] total: {data.get('total_score', 0):.2f}  "
+            f"features: {_fmt_tally(ft)}  tests: {_fmt_tally(tt)}"
+        )
 
     fast_mode = args.fast
+
+    # ── 3.2 Student Tests → Teacher Pandora (validation) ─────────────
+    if not fast_mode:
+        print("\n=== Student Tests → Teacher Pandora (validation) ===")
+        for gname, gpath in groups:
+            ts = group_test_suite(gpath)
+            if not os.path.isfile(ts):
+                print(f"  [{gname}] SKIP: no testSuite.json")
+                continue
+
+            print(f"  [{gname}] validating test suite...")
+            data, valid, invalid, removed = validate_test_suite(
+                gname, gpath, ref_jar, cfg
+            )
+            validation_results[gname] = (data, valid, invalid, removed)
+            if data:
+                print(
+                    f"  [{gname}] valid: {len(valid)}, invalid: {len(invalid)}, removed: {len(removed)}"
+                )
+            elif removed:
+                print(
+                    f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)"
+                )
 
     if not fast_mode:
         # ── Self-evaluation (student tests → own Pandora) ────────────────
@@ -953,7 +981,9 @@ def main():
                     )
                 )
     else:
-        print("\n=== Fast mode: skipping self-evaluation and cross-testing ===")
+        print(
+            "\n=== Fast mode: skipping validation, self-evaluation and cross-testing ==="
+        )
         group_metrics = {}
         pairwise_agreement = {}
 
@@ -971,6 +1001,8 @@ def main():
         group_data[gname] = {
             "team": gname,
             "version": te.get("version", "?"),
+            "feature_tally": te.get("tally", {}),
+            "test_tally": te.get("test_tally", {}),
             "teacher_evaluation": {
                 "features_score": teacher_scores.get(gname, {}),
                 "total_score": te.get("total_score", 0),
@@ -1055,14 +1087,15 @@ table thead th:first-child {
             teacher_scores,
         )
     )
-    report_parts.append(
-        md_feature_group_matrix(
-            "Test Suite Validation (Student Tests → Teacher Pandora)",
-            all_features,
-            group_names,
-            validation_scores,
+    if not fast_mode:
+        report_parts.append(
+            md_feature_group_matrix(
+                "Test Suite Validation (Student Tests → Teacher Pandora)",
+                all_features,
+                group_names,
+                validation_scores,
+            )
         )
-    )
     if not fast_mode:
         if group_metrics:
             report_parts.append(
@@ -1090,20 +1123,26 @@ table thead th:first-child {
         d = group_data.get(gname, {})
         short_name = shorten_team_name(gname)
         ts = d.get("teacher_evaluation", {}).get("total_score", 0)
+        ft = d.get("feature_tally", {})
+        tt = d.get("test_tally", {})
         vt = d.get("test_quality", {}).get("valid_tests", 0)
-        tt = d.get("test_quality", {}).get("total_tests", 0)
+        ttests = d.get("test_quality", {}).get("total_tests", 0)
         rm = d.get("test_quality", {}).get("removed_tests", 0)
+        feat_str = _fmt_tally(ft) if ft else "n/a"
+        test_str = _fmt_tally(tt) if tt else "n/a"
         if fast_mode:
             print(
                 f"  {short_name:20s}  teacher={ts:.2f}  "
-                f"tests={vt}/{tt}  removed={rm}"
+                f"feat={feat_str}  tests={test_str}  "
+                f"suite={vt}/{ttests}  removed={rm}"
             )
         else:
             ss = d.get("self_evaluation", {}).get("total_score", 0)
             f1 = d.get("test_quality", {}).get("f1", 0)
             print(
                 f"  {short_name:20s}  teacher={ts:.2f}  self={ss:.2f}  "
-                f"F1={f1:.2f}  tests={vt}/{tt}  removed={rm}"
+                f"F1={f1:.2f}  feat={feat_str}  tests={test_str}  "
+                f"suite={vt}/{ttests}  removed={rm}"
             )
 
 
