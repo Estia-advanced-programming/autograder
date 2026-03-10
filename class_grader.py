@@ -558,7 +558,7 @@ def _fmt_tally(tally):
 
 def md_summary_table(group_names, group_data):
     """Per-group summary table."""
-    lines = ["## Class Summary", ""]
+    lines = []
     lines.append(
         "| Team | Version | Teacher Score "
         "| Features (\U0001f7e2/\U0001f7e1/\U0001f534/\u26aa) "
@@ -1053,6 +1053,15 @@ def main():
         else:
             validation_scores[gname] = {f: None for f in all_features}
 
+    # Load teacher test suite to get test count
+    try:
+        with open(teacher_tests, "r") as f:
+            teacher_test_list = json.load(f)
+        teacher_test_count = len(teacher_test_list)
+    except Exception:
+        teacher_test_count = "?"
+    teacher_tests_name = os.path.basename(teacher_tests)
+
     report_parts = []
     report_parts.append("# Class Grader Report\n")
 
@@ -1079,34 +1088,125 @@ table thead th:first-child {
 
 """
     report_parts.append(css_block)
+
+    # ── Legend ────────────────────────────────────────────────────────
+    report_parts.append("""\
+## Legend
+
+| Badge | Meaning | Score range |
+|-------|---------|-------------|
+| 🟢 | **Validated** — the feature/test passes | score ≥ 0.9 |
+| 🟡 | **Almost** — close but not passing | 0.5 ≤ score < 0.9 |
+| 🔴 | **Missed** — the feature was attempted but the output is wrong | score < 0.5 |
+| ⚪️ | **Not implemented / not declared** — the feature is not listed in the team's manifest or was not found in the output | — |
+
+""")
+
+    # ── Teacher Evaluation ───────────────────────────────────────────
+    report_parts.append(f"""\
+## Teacher Evaluation (Teacher Tests → Student Pandoras)
+
+**Goal**: measure how well each team's Pandora implements the expected features.
+
+The teacher's test suite (`{teacher_tests_name}`, **{teacher_test_count} tests** \
+covering **{len(all_features)} features**) is run against each team's JAR.
+For every feature, the autograder compares the student's output to the expected \
+value with a numeric tolerance. The per-feature score is the average across all \
+tests for that feature (1.0 = perfect match, 0.0 = completely wrong or missing).
+
+Only features declared in the team's `manifest.json` are evaluated; \
+undeclared features appear as ⚪️.
+
+""")
     report_parts.append(
         md_feature_group_matrix(
-            "Teacher Evaluation (Teacher Tests → Student Pandoras)",
+            "Results",
             all_features,
             group_names,
             teacher_scores,
         )
     )
+
+    # ── Test Suite Validation ────────────────────────────────────────
     if not fast_mode:
+        report_parts.append("""\
+## Test Suite Validation (Student Tests → Teacher Pandora)
+
+**Goal**: assess the quality of each team's own test suite.
+
+Each team's `testSuite.json` is first **cleaned** (tests referencing missing \
+files or non-whitelisted features are removed), then run against the \
+**reference implementation** (teacher's JAR, which is assumed to be correct).
+
+A test that passes against the reference is **valid** — it checks something \
+that the correct implementation actually produces. A test that fails is \
+**invalid** — the expected value in the test is wrong.
+
+""")
         report_parts.append(
             md_feature_group_matrix(
-                "Test Suite Validation (Student Tests → Teacher Pandora)",
+                "Results",
                 all_features,
                 group_names,
                 validation_scores,
             )
         )
+
+    # ── Cross-Testing Metrics ────────────────────────────────────────
     if not fast_mode:
         if group_metrics:
+            report_parts.append("""\
+## Test Quality Metrics (Cross-Testing)
+
+**Goal**: evaluate how accurately each team's tests distinguish correct from \
+incorrect implementations.
+
+Each team's cleaned test suite is run against **every other team's** Pandora. \
+The results are compared to the ground truth (teacher evaluation) to compute \
+classification metrics:
+
+| Metric | Definition |
+|--------|------------|
+| **Precision** | Of the features your tests mark as "passing", how many actually pass? High precision = few false positives. |
+| **Recall** | Of the features that actually pass, how many do your tests detect? High recall = few false negatives. |
+| **F1** | Harmonic mean of precision and recall — the single best measure of test quality. |
+| **Agreement** | Overall rate at which your tests agree with the teacher evaluation. |
+
+""")
             report_parts.append(
-                md_metrics_table("Test Quality Metrics (Cross-Testing)", group_metrics)
+                md_metrics_table("Results", group_metrics)
             )
         if pairwise_agreement:
+            report_parts.append("""\
+## Pairwise Agreement Heatmap
+
+Each cell shows the agreement rate between one team's tests (row) and \
+another team's Pandora (column). A value of 1.00 means the tester's \
+tests agree with the teacher evaluation for every feature of the tested team.
+
+""")
             report_parts.append(
                 md_agreement_heatmap(
-                    "Pairwise Agreement Heatmap", group_names, pairwise_agreement
+                    "Results", group_names, pairwise_agreement
                 )
             )
+
+    # ── Class Summary ────────────────────────────────────────────────
+    report_parts.append(f"""\
+## Class Summary
+
+One row per team. The **Features** and **Tests** columns show how many \
+items fall in each category:
+🟢 validated · 🟡 almost · 🔴 missed · ⚪ not implemented.
+
+- **Teacher Score**: average across all evaluated tests from the teacher suite.
+- **Features (🟢/🟡/🔴/⚪)**: per-feature tally after aggregating test scores.
+- **Tests (🟢/🟡/🔴/⚪)**: per-individual-test tally.
+- **Test Quality (F1)**: F1 score from cross-testing (0 in fast mode).
+- **Valid Tests**: how many of the team's own tests pass against the reference / total tests.
+- **Removed**: tests dropped before evaluation (missing files, non-whitelisted features).
+
+""")
     report_parts.append(md_summary_table(group_names, group_data))
 
     report_text = "\n".join(report_parts)
