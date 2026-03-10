@@ -1,6 +1,9 @@
 dir: ../2026/pandora-2026-submissions/
-tests: ./test/testSuite.json
-testdir: ./test/
+tests: ./test/shortTestSuite.json
 ref: ../2026/pandora-2026-the_awesome_teachers_2026/target/pandora.jar
 output: reports
-fast: true
+phases:
+  teacher_evaluation: true
+  validation: false
+  self_evaluation: false
+  cross_testing: false

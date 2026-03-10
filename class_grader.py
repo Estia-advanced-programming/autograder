@@ -690,7 +690,7 @@ def build_parser():
         "--fast",
         default=None,
         action="store_true",
-        help="Fast mode: only run teacher→students and students→teacher, skip cross-testing",
+        help="Shorthand: only run teacher evaluation, skip all other phases",
     )
     p.add_argument(
         "--dryrun",
@@ -717,6 +717,7 @@ _YAML_KEY_MAP = {
     "timeout": "timeout",
     "debug": "debug",
     "fast": "fast",
+    "phases": "phases",
     "dryrun": "dryrun",
 }
 
@@ -729,7 +730,7 @@ def main():
     if args.config:
         file_cfg = load_yaml_config(args.config)
         for yaml_key, attr in _YAML_KEY_MAP.items():
-            if yaml_key in file_cfg and getattr(args, attr) is None:
+            if yaml_key in file_cfg and getattr(args, attr, None) is None:
                 setattr(args, attr, file_cfg[yaml_key])
 
     # Apply defaults for optional args not set by CLI or config
@@ -745,8 +746,30 @@ def main():
         args.debug = False
     if args.fast is None:
         args.fast = False
+    if not hasattr(args, "phases") or args.phases is None:
+        args.phases = {}
     if args.dryrun is None:
         args.dryrun = False
+
+    # ── Resolve per-phase flags ──────────────────────────────────────
+    # Defaults: all phases enabled
+    _default_phases = {
+        "teacher_evaluation": True,
+        "validation": True,
+        "self_evaluation": True,
+        "cross_testing": True,
+    }
+    phases = {k: v for k, v in _default_phases.items()}
+    # Override with config phases (if any)
+    if isinstance(args.phases, dict):
+        for k, v in args.phases.items():
+            if k in phases:
+                phases[k] = bool(v)
+    # --fast overrides: only teacher_evaluation
+    if args.fast:
+        phases["validation"] = False
+        phases["self_evaluation"] = False
+        phases["cross_testing"] = False
 
     # Validate required options
     missing = []
@@ -804,49 +827,53 @@ def main():
         group_manifests[gname] = manifest.get("features", []) if manifest else []
 
     # ── 3.1 Teacher Tests → Student Pandoras ──────────────────────────
-    print("\n=== Teacher Tests → Student Pandoras ===")
-    for gname, gpath in groups:
-        jar = group_jar(gpath)
-        manifest_path = group_manifest(gpath)
-        if not os.path.isfile(jar):
-            print(f"  [{gname}] SKIP: target/pandora.jar not found")
-            continue
-        if not os.path.isfile(manifest_path):
-            print(f"  [{gname}] SKIP: manifest.json not found")
-            continue
+    if phases["teacher_evaluation"]:
+        print("\n=== Teacher Tests → Student Pandoras ===")
+        for gname, gpath in groups:
+            jar = group_jar(gpath)
+            manifest_path = group_manifest(gpath)
+            if not os.path.isfile(jar):
+                print(f"  [{gname}] SKIP: target/pandora.jar not found")
+                continue
+            if not os.path.isfile(manifest_path):
+                print(f"  [{gname}] SKIP: manifest.json not found")
+                continue
 
-        mfeats = group_manifests[gname]
+            mfeats = group_manifests[gname]
 
-        print(f"  [{gname}] running teacher tests...")
-        data, err = run_autograder(
-            jar=jar,
-            test_suite=teacher_tests,
-            manifest=manifest_path,
-            test_dir=teacher_workdir,
-            coverage=cfg["coverage"],
-            jacoco=cfg.get("jacoco"),
-            timeout=cfg["timeout"],
-            debug=cfg["debug"],
-            dryrun=cfg["dryrun"],
-        )
-        if data is None and err is None:
-            continue
-        if err:
-            print(f"  [{gname}] ERROR: {err}")
-            continue
-        teacher_eval[gname] = data
-        teacher_scores[gname] = extract_feature_scores(data, all_features, mfeats)
-        ft = data.get("tally", {})
-        tt = data.get("test_tally", {})
-        print(
-            f"  [{gname}] total: {data.get('total_score', 0):.2f}  "
-            f"features: {_fmt_tally(ft)}  tests: {_fmt_tally(tt)}"
-        )
+            print(f"  [{gname}] running teacher tests...")
+            data, err = run_autograder(
+                jar=jar,
+                test_suite=teacher_tests,
+                manifest=manifest_path,
+                test_dir=teacher_workdir,
+                coverage=cfg["coverage"],
+                jacoco=cfg.get("jacoco"),
+                timeout=cfg["timeout"],
+                debug=cfg["debug"],
+                dryrun=cfg["dryrun"],
+            )
+            if data is None and err is None:
+                continue
+            if err:
+                print(f"  [{gname}] ERROR: {err}")
+                continue
+            teacher_eval[gname] = data
+            teacher_scores[gname] = extract_feature_scores(data, all_features, mfeats)
+            ft = data.get("tally", {})
+            tt = data.get("test_tally", {})
+            print(
+                f"  [{gname}] total: {data.get('total_score', 0):.2f}  "
+                f"features: {_fmt_tally(ft)}  tests: {_fmt_tally(tt)}"
+            )
 
-    fast_mode = args.fast
+    # Print skipped phases
+    skipped = [k for k, v in phases.items() if not v]
+    if skipped:
+        print(f"\n=== Skipped phases: {', '.join(skipped)} ===")
 
     # ── 3.2 Student Tests → Teacher Pandora (validation) ─────────────
-    if not fast_mode:
+    if phases["validation"]:
         print("\n=== Student Tests → Teacher Pandora (validation) ===")
         for gname, gpath in groups:
             ts = group_test_suite(gpath)
@@ -868,8 +895,8 @@ def main():
                     f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)"
                 )
 
-    if not fast_mode:
-        # ── Self-evaluation (student tests → own Pandora) ────────────────
+    # ── Self-evaluation (student tests → own Pandora) ────────────────
+    if phases["self_evaluation"]:
         print("\n=== Self-Evaluation (Student Tests → Own Pandora) ===")
         for gname, gpath in groups:
             jar = group_jar(gpath)
@@ -901,7 +928,8 @@ def main():
             self_eval[gname] = data
             print(f"  [{gname}] self-score: {data.get('total_score', 0):.2f}")
 
-        # ── 3.3 Cross-Testing ────────────────────────────────────────────
+    # ── 3.3 Cross-Testing ────────────────────────────────────────────
+    if phases["cross_testing"]:
         print("\n=== Cross-Testing (Student Tests → Other Pandoras) ===")
 
         # Build ground truth from teacher evaluation
@@ -981,9 +1009,6 @@ def main():
                     )
                 )
     else:
-        print(
-            "\n=== Fast mode: skipping validation, self-evaluation and cross-testing ==="
-        )
         group_metrics = {}
         pairwise_agreement = {}
 
@@ -1090,7 +1115,8 @@ table thead th:first-child {
     report_parts.append(css_block)
 
     # ── Legend ────────────────────────────────────────────────────────
-    report_parts.append("""\
+    report_parts.append(
+        """\
 ## Legend
 
 | Badge | Meaning | Score range |
@@ -1100,10 +1126,13 @@ table thead th:first-child {
 | 🔴 | **Missed** — the feature was attempted but the output is wrong | score < 0.5 |
 | ⚪️ | **Not implemented / not declared** — the feature is not listed in the team's manifest or was not found in the output | — |
 
-""")
+"""
+    )
 
     # ── Teacher Evaluation ───────────────────────────────────────────
-    report_parts.append(f"""\
+    if phases["teacher_evaluation"]:
+        report_parts.append(
+            f"""\
 ## Teacher Evaluation (Teacher Tests → Student Pandoras)
 
 **Goal**: measure how well each team's Pandora implements the expected features.
@@ -1117,19 +1146,21 @@ tests for that feature (1.0 = perfect match, 0.0 = completely wrong or missing).
 Only features declared in the team's `manifest.json` are evaluated; \
 undeclared features appear as ⚪️.
 
-""")
-    report_parts.append(
-        md_feature_group_matrix(
-            "Results",
-            all_features,
-            group_names,
-            teacher_scores,
+"""
         )
-    )
+        report_parts.append(
+            md_feature_group_matrix(
+                "Results",
+                all_features,
+                group_names,
+                teacher_scores,
+            )
+        )
 
     # ── Test Suite Validation ────────────────────────────────────────
-    if not fast_mode:
-        report_parts.append("""\
+    if phases["validation"]:
+        report_parts.append(
+            """\
 ## Test Suite Validation (Student Tests → Teacher Pandora)
 
 **Goal**: assess the quality of each team's own test suite.
@@ -1142,7 +1173,8 @@ A test that passes against the reference is **valid** — it checks something \
 that the correct implementation actually produces. A test that fails is \
 **invalid** — the expected value in the test is wrong.
 
-""")
+"""
+        )
         report_parts.append(
             md_feature_group_matrix(
                 "Results",
@@ -1153,9 +1185,10 @@ that the correct implementation actually produces. A test that fails is \
         )
 
     # ── Cross-Testing Metrics ────────────────────────────────────────
-    if not fast_mode:
+    if phases["cross_testing"]:
         if group_metrics:
-            report_parts.append("""\
+            report_parts.append(
+                """\
 ## Test Quality Metrics (Cross-Testing)
 
 **Goal**: evaluate how accurately each team's tests distinguish correct from \
@@ -1172,27 +1205,27 @@ classification metrics:
 | **F1** | Harmonic mean of precision and recall — the single best measure of test quality. |
 | **Agreement** | Overall rate at which your tests agree with the teacher evaluation. |
 
-""")
-            report_parts.append(
-                md_metrics_table("Results", group_metrics)
+"""
             )
+            report_parts.append(md_metrics_table("Results", group_metrics))
         if pairwise_agreement:
-            report_parts.append("""\
+            report_parts.append(
+                """\
 ## Pairwise Agreement Heatmap
 
 Each cell shows the agreement rate between one team's tests (row) and \
 another team's Pandora (column). A value of 1.00 means the tester's \
 tests agree with the teacher evaluation for every feature of the tested team.
 
-""")
+"""
+            )
             report_parts.append(
-                md_agreement_heatmap(
-                    "Results", group_names, pairwise_agreement
-                )
+                md_agreement_heatmap("Results", group_names, pairwise_agreement)
             )
 
     # ── Class Summary ────────────────────────────────────────────────
-    report_parts.append(f"""\
+    report_parts.append(
+        f"""\
 ## Class Summary
 
 One row per team. The **Features** and **Tests** columns show how many \
@@ -1202,11 +1235,12 @@ items fall in each category:
 - **Teacher Score**: average across all evaluated tests from the teacher suite.
 - **Features (🟢/🟡/🔴/⚪)**: per-feature tally after aggregating test scores.
 - **Tests (🟢/🟡/🔴/⚪)**: per-individual-test tally.
-- **Test Quality (F1)**: F1 score from cross-testing (0 in fast mode).
+- **Test Quality (F1)**: F1 score from cross-testing (0 when cross_testing phase is disabled).
 - **Valid Tests**: how many of the team's own tests pass against the reference / total tests.
 - **Removed**: tests dropped before evaluation (missing files, non-whitelisted features).
 
-""")
+"""
+    )
     report_parts.append(md_summary_table(group_names, group_data))
 
     report_text = "\n".join(report_parts)
@@ -1230,20 +1264,16 @@ items fall in each category:
         rm = d.get("test_quality", {}).get("removed_tests", 0)
         feat_str = _fmt_tally(ft) if ft else "n/a"
         test_str = _fmt_tally(tt) if tt else "n/a"
-        if fast_mode:
-            print(
-                f"  {short_name:20s}  teacher={ts:.2f}  "
-                f"feat={feat_str}  tests={test_str}  "
-                f"suite={vt}/{ttests}  removed={rm}"
-            )
-        else:
+        parts = [f"  {short_name:20s}  teacher={ts:.2f}"]
+        if phases["self_evaluation"]:
             ss = d.get("self_evaluation", {}).get("total_score", 0)
+            parts.append(f"self={ss:.2f}")
+        if phases["cross_testing"]:
             f1 = d.get("test_quality", {}).get("f1", 0)
-            print(
-                f"  {short_name:20s}  teacher={ts:.2f}  self={ss:.2f}  "
-                f"F1={f1:.2f}  feat={feat_str}  tests={test_str}  "
-                f"suite={vt}/{ttests}  removed={rm}"
-            )
+            parts.append(f"F1={f1:.2f}")
+        parts.append(f"feat={feat_str}  tests={test_str}")
+        parts.append(f"suite={vt}/{ttests}  removed={rm}")
+        print("  ".join(parts))
 
 
 if __name__ == "__main__":
