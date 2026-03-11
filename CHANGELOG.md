@@ -1,3 +1,11 @@
+## v2.3.0 (2026-03-11)
+
+### Feat
+
+- **classGrader**: improve table readibily
+- **updateGroups**: pull and compile student code from the cli
+- parallelize test execution, improve report readability
+
 ## v2.2.0 (2026-03-10)
 
 ### Feat

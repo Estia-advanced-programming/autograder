@@ -6,6 +6,6 @@ workers: 16
 workers_per_group: 8
 phases:
   teacher_evaluation: true
-  validation: false
-  self_evaluation: false
-  cross_testing: false
+  validation: true
+  self_evaluation: true
+  cross_testing: true
