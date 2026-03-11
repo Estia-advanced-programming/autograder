@@ -493,8 +493,14 @@ def compute_classification_metrics(tester_verdicts, ground_truth):
     agreement = (tp + tn) / total if total > 0 else 0.0
 
     return {
-        "tp": tp, "fp": fp, "tn": tn, "fn": fn,
-        "precision": precision, "recall": recall, "f1": f1, "agreement": agreement,
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "agreement": agreement,
     }
 
 
@@ -523,8 +529,9 @@ STATUS_BADGE = {
 }
 
 
-def md_feature_group_matrix(title, all_features, group_names, score_matrix,
-                            detail_matrix=None):
+def md_feature_group_matrix(
+    title, all_features, group_names, score_matrix, detail_matrix=None
+):
     """Build a markdown feature x group matrix.
 
     score_matrix: {group: {feature: score_or_None}}
@@ -533,6 +540,7 @@ def md_feature_group_matrix(title, all_features, group_names, score_matrix,
                    and each cell shows valid/total.
     """
     lines = [f"## {title}", ""]
+    lines.append("::: {..column-screen-inset}")
     short_names = [shorten_team_name(g) for g in group_names]
     header = "| Feature | " + " | ".join(short_names) + " |"
     sep = "|---------|" + "|".join(["------"] * len(group_names)) + "|"
@@ -544,7 +552,7 @@ def md_feature_group_matrix(title, all_features, group_names, score_matrix,
             if detail is not None:
                 # Use autograder's own classification
                 b = STATUS_BADGE.get(detail["status"], "🔴")
-                cells.append(f"{b} {detail['valid']}/{detail['total']}")
+                cells.append(f"{b} ^{detail['valid']}/{detail['total']}^")
             else:
                 # Fallback: score-only (or not declared)
                 score = score_matrix.get(g, {}).get(feat)
@@ -553,6 +561,9 @@ def md_feature_group_matrix(title, all_features, group_names, score_matrix,
                 else:
                     cells.append(badge(score))
         lines.append(f"| {feat} | " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append(f": {title} " + "{.striped .hover .borderless .responsive}")
+    lines.append(":::")
     lines.append("")
     return "\n".join(lines)
 
@@ -661,7 +672,9 @@ def md_summary_table(group_names, group_data):
 def load_yaml_config(path):
     """Load a YAML configuration file and return a dict."""
     if yaml is None:
-        print("ERROR: PyYAML is required for --config. Install with: pip install pyyaml")
+        print(
+            "ERROR: PyYAML is required for --config. Install with: pip install pyyaml"
+        )
         sys.exit(1)
     with open(path, "r") as f:
         return yaml.safe_load(f) or {}
@@ -903,7 +916,9 @@ def main():
             )
             return gname, None, data, err
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_groups) as pool:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=concurrent_groups
+        ) as pool:
             futures = {
                 pool.submit(_teacher_eval_one, gname, gpath): gname
                 for gname, gpath in groups
@@ -923,8 +938,12 @@ def main():
                     continue
                 mfeats = group_manifests[gname]
                 teacher_eval[gname] = data
-                teacher_scores[gname] = extract_feature_scores(data, all_features, mfeats)
-                teacher_details[gname] = extract_feature_details(data, all_features, mfeats)
+                teacher_scores[gname] = extract_feature_scores(
+                    data, all_features, mfeats
+                )
+                teacher_details[gname] = extract_feature_details(
+                    data, all_features, mfeats
+                )
                 ft = data.get("tally", {})
                 tt = data.get("test_tally", {})
                 print(
@@ -950,7 +969,9 @@ def main():
             )
             return gname, None, data, valid, invalid, removed
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_groups) as pool:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=concurrent_groups
+        ) as pool:
             futures = {
                 pool.submit(_validate_one, gname, gpath): gname
                 for gname, gpath in groups
@@ -994,7 +1015,9 @@ def main():
             )
             return gname, None, data, err
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_groups) as pool:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=concurrent_groups
+        ) as pool:
             futures = {
                 pool.submit(_self_eval_one, gname, gpath): gname
                 for gname, gpath in groups
@@ -1044,9 +1067,20 @@ def main():
                 manifest_path = group_manifest(tested_path)
                 if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
                     continue
-                cross_jobs.append((tester_name, tester_path, tested_name, jar, manifest_path, cleaned_ts))
+                cross_jobs.append(
+                    (
+                        tester_name,
+                        tester_path,
+                        tested_name,
+                        jar,
+                        manifest_path,
+                        cleaned_ts,
+                    )
+                )
 
-        def _cross_test_one(tester_name, tester_path, tested_name, jar, manifest_path, cleaned_ts):
+        def _cross_test_one(
+            tester_name, tester_path, tested_name, jar, manifest_path, cleaned_ts
+        ):
             data, err = run_autograder(
                 jar=jar,
                 test_suite=cleaned_ts,
@@ -1060,7 +1094,9 @@ def main():
             return tester_name, tested_name, data, err
 
         print(f"  Running {len(cross_jobs)} cross-test pairs...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_groups) as pool:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=concurrent_groups
+        ) as pool:
             futures = [pool.submit(_cross_test_one, *job) for job in cross_jobs]
             for future in concurrent.futures.as_completed(futures):
                 tester_name, tested_name, data, err = future.result()
@@ -1099,8 +1135,17 @@ def main():
         vr = validation_results.get(gname, (None, [], [], []))
         _, valid, invalid, removed = vr
         metrics = group_metrics.get(
-            gname, {"tp": 0, "fp": 0, "tn": 0, "fn": 0,
-                    "precision": 0, "recall": 0, "f1": 0, "agreement": 0}
+            gname,
+            {
+                "tp": 0,
+                "fp": 0,
+                "tn": 0,
+                "fn": 0,
+                "precision": 0,
+                "recall": 0,
+                "f1": 0,
+                "agreement": 0,
+            },
         )
 
         group_data[gname] = {
@@ -1173,14 +1218,16 @@ def main():
     teacher_tests_name = os.path.basename(teacher_tests)
 
     report_parts = []
-    report_parts.append("""\
+    report_parts.append(
+        """\
 ---
 title: "Class Grader Report"
 format:
   html:
     page-layout: full
 ---
-""")
+"""
+    )
 
     # Add CSS for vertical column headers in Quarto
     css_block = """```{=html}
@@ -1218,7 +1265,7 @@ table thead th:first-child {
 | 🔴 | **Missed** — the feature was attempted but the output is wrong | score < 0.5 |
 | ⚪️ | **Not implemented / not declared** — the feature is not listed in the team's manifest or was not found in the output | — |
 
-: Legend {.borderless .responsive}
+: Legend {.striped .hover .borderless .responsive}
 
 """
     )
@@ -1303,11 +1350,13 @@ confusion matrix counts and classification metrics:
 | **Recall** | TP / (TP + FN) — of features that are truly correct, how many do your tests detect? |
 | **Accuracy** | (TP + TN) / total — overall rate of correct classifications |
 
-: Column Definitions {.borderless .responsive}
+: Column Definitions {.striped .hover .borderless .responsive}
 
 """
             )
-            report_parts.append(md_metrics_table("Cross-Testing Results", group_metrics))
+            report_parts.append(
+                md_metrics_table("Cross-Testing Results", group_metrics)
+            )
 
     # ── Class Summary ────────────────────────────────────────────────
     report_parts.append(
@@ -1336,29 +1385,34 @@ items fall in each category:
         ft = d.get("feature_tally", {})
         tt = d.get("test_tally", {})
         tq = d.get("test_quality", {})
-        summary_rows.append({
-            "Team": shorten_team_name(gname),
-            "Version": d.get("version", "?"),
-            "Teacher Score": round(d.get("teacher_evaluation", {}).get("total_score", 0), 2),
-            "F\u2705": ft.get("validated", 0),
-            "F\U0001f7e1": ft.get("almost", 0),
-            "F\u274c": ft.get("missed", 0),
-            "F\u26aa": ft.get("not_implemented", 0),
-            "T\u2705": tt.get("validated", 0),
-            "T\U0001f7e1": tt.get("almost", 0),
-            "T\u274c": tt.get("missed", 0),
-            "T\u26aa": tt.get("not_implemented", 0),
-            "F1": round(tq.get("f1", 0), 2),
-            "Valid Tests": tq.get("valid_tests", 0),
-            "Total Tests": tq.get("total_tests", 0),
-            "Removed": tq.get("removed_tests", 0),
-        })
+        summary_rows.append(
+            {
+                "Team": shorten_team_name(gname),
+                "Version": d.get("version", "?"),
+                "Teacher Score": round(
+                    d.get("teacher_evaluation", {}).get("total_score", 0), 2
+                ),
+                "F\u2705": ft.get("validated", 0),
+                "F\U0001f7e1": ft.get("almost", 0),
+                "F\u274c": ft.get("missed", 0),
+                "F\u26aa": ft.get("not_implemented", 0),
+                "T\u2705": tt.get("validated", 0),
+                "T\U0001f7e1": tt.get("almost", 0),
+                "T\u274c": tt.get("missed", 0),
+                "T\u26aa": tt.get("not_implemented", 0),
+                "F1": round(tq.get("f1", 0), 2),
+                "Valid Tests": tq.get("valid_tests", 0),
+                "Total Tests": tq.get("total_tests", 0),
+                "Removed": tq.get("removed_tests", 0),
+            }
+        )
 
     summary_json_path = os.path.join(output_dir, "summary_data.json")
     with open(summary_json_path, "w") as f:
         json.dump(summary_rows, f, ensure_ascii=False)
 
-    report_parts.append("""\
+    report_parts.append(
+        """\
 ```{python}
 #| echo: false
 import json, pandas as pd
@@ -1368,7 +1422,8 @@ with open("summary_data.json") as f:
     summary = pd.DataFrame(json.load(f))
 show(summary, paging=False, classes="display compact", columnDefs=[{"className": "dt-center", "targets": "_all"}])
 ```
-""")
+"""
+    )
 
     report_text = "\n".join(report_parts)
     report_path = os.path.join(output_dir, "class_report.qmd")
