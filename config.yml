@@ -1,7 +1,9 @@
 dir: ../2026/pandora-2026-submissions/
-tests: ./test/shortTestSuite.json
+tests: ./test/partialEvaluation.json
 ref: ../2026/pandora-2026-the_awesome_teachers_2026/target/pandora.jar
 output: reports
+workers: 16
+workers_per_group: 8
 phases:
   teacher_evaluation: true
   validation: false

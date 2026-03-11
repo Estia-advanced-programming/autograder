@@ -12,6 +12,7 @@ See --help for full option list.
 """
 
 import argparse
+import concurrent.futures
 import json
 import math
 import os
@@ -387,17 +388,75 @@ def _build_feature_command(test, jar_path, cfg):
     )
 
 
+def _run_one_feature_test(test, jar_path, cfg):
+    """Run a single feature-mode test (thread-safe)."""
+    command = _build_feature_command(test, jar_path, cfg)
+    output = run_command(command, cfg["timeout"], cfg["debug"])
+    if output == "TIMEOUT":
+        test["actual_result"] = "TIMEOUT"
+        test["score"] = 0.0
+    else:
+        test["actual_result"] = output
+        test["score"] = compare_output(output, test["result"])
+
+
 def run_feature_tests(tests, jar_path, cfg):
-    """Execute each feature-mode test individually."""
-    for test in tests:
-        command = _build_feature_command(test, jar_path, cfg)
-        output = run_command(command, cfg["timeout"], cfg["debug"])
+    """Execute each feature-mode test individually, optionally in parallel."""
+    workers = cfg.get("workers", 1)
+    if workers > 1 and len(tests) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_run_one_feature_test, t, jar_path, cfg) for t in tests]
+            concurrent.futures.wait(futures)
+    else:
+        for test in tests:
+            _run_one_feature_test(test, jar_path, cfg)
+
+
+def _run_one_full_group(file, option, group, jar_path, cfg):
+    """Run one full-mode group of tests (thread-safe)."""
+    options = option.split() if option else None
+    if isinstance(file, tuple):
+        file_paths = [resolve_path(f, cfg.get("test_dir")) for f in file]
+        command = build_java_command(
+            jar_path,
+            files=file_paths,
+            options=options,
+            coverage=cfg["coverage"],
+            jacoco_path=cfg["jacoco"],
+            jacoco_append=True,
+        )
+    else:
+        file_path = resolve_path(file, cfg.get("test_dir"))
+        command = build_java_command(
+            jar_path,
+            file=file_path,
+            options=options,
+            coverage=cfg["coverage"],
+            jacoco_path=cfg["jacoco"],
+            jacoco_append=True,
+        )
+    output = run_command(command, cfg["timeout"], cfg["debug"])
+    output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
+
+    for test in group:
         if output == "TIMEOUT":
             test["actual_result"] = "TIMEOUT"
             test["score"] = 0.0
             continue
-        test["actual_result"] = output
-        test["score"] = compare_output(output, test["result"])
+
+        lookup_key = (
+            test.get("feature") or test.get("metadata") or test.get("parameter", "")
+        )
+        test["actual_result"] = f"key {lookup_key}: not found"
+        test["score"] = 0.0
+
+        for line in output_lines:
+            k, _, v = line.partition(":")
+            if k.strip() == lookup_key:
+                actual = v.strip()
+                test["actual_result"] = actual
+                test["score"] = compare_output(actual, test["result"])
+                break
 
 
 def run_full_tests(tests, jar_path, cfg):
@@ -410,50 +469,17 @@ def run_full_tests(tests, jar_path, cfg):
             key = (test["file"], test.get("option", ""))
         groups.setdefault(key, []).append(test)
 
-    for (file, option), group in groups.items():
-        options = option.split() if option else None
-        if isinstance(file, tuple):
-            file_paths = [resolve_path(f, cfg.get("test_dir")) for f in file]
-            command = build_java_command(
-                jar_path,
-                files=file_paths,
-                options=options,
-                coverage=cfg["coverage"],
-                jacoco_path=cfg["jacoco"],
-                jacoco_append=True,
-            )
-        else:
-            file_path = resolve_path(file, cfg.get("test_dir"))
-            command = build_java_command(
-                jar_path,
-                file=file_path,
-                options=options,
-                coverage=cfg["coverage"],
-                jacoco_path=cfg["jacoco"],
-                jacoco_append=True,
-            )
-        output = run_command(command, cfg["timeout"], cfg["debug"])
-        output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
-
-        for test in group:
-            if output == "TIMEOUT":
-                test["actual_result"] = "TIMEOUT"
-                test["score"] = 0.0
-                continue
-
-            lookup_key = (
-                test.get("feature") or test.get("metadata") or test.get("parameter", "")
-            )
-            test["actual_result"] = f"key {lookup_key}: not found"
-            test["score"] = 0.0
-
-            for line in output_lines:
-                k, _, v = line.partition(":")
-                if k.strip() == lookup_key:
-                    actual = v.strip()
-                    test["actual_result"] = actual
-                    test["score"] = compare_output(actual, test["result"])
-                    break
+    workers = cfg.get("workers", 1)
+    if workers > 1 and len(groups) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(_run_one_full_group, file, option, group, jar_path, cfg)
+                for (file, option), group in groups.items()
+            ]
+            concurrent.futures.wait(futures)
+    else:
+        for (file, option), group in groups.items():
+            _run_one_full_group(file, option, group, jar_path, cfg)
 
 
 # ─── Score aggregation ──────────────────────────────────────────────────────
@@ -492,10 +518,14 @@ def group_by_milestone(tests):
 # ─── Pass badge ─────────────────────────────────────────────────────────────
 
 
+PASS_THRESHOLD = 0.9
+PARTIAL_THRESHOLD = 0.5
+
+
 def badge(score):
-    if score >= 0.9:
+    if score >= PASS_THRESHOLD:
         return "🟢"
-    if score >= 0.8:
+    if score >= PARTIAL_THRESHOLD:
         return "🟡"
     return "🔴"
 
@@ -522,9 +552,9 @@ def tally_features(feature_scores, tests, all_tests, implemented_features):
         )
         if all_not_found and key_tests:
             not_implemented += 1
-        elif score >= 0.9:
+        elif score >= PASS_THRESHOLD:
             validated += 1
-        elif score >= 0.8:
+        elif score >= PARTIAL_THRESHOLD:
             almost += 1
         else:
             missed += 1
@@ -558,9 +588,9 @@ def tally_tests(tests, all_tests, implemented_features):
         actual = str(t.get("actual_result", ""))
         if "not found" in actual:
             not_implemented += 1
-        elif t["score"] >= 0.9:
+        elif t["score"] >= PASS_THRESHOLD:
             validated += 1
-        elif t["score"] >= 0.8:
+        elif t["score"] >= PARTIAL_THRESHOLD:
             almost += 1
         else:
             missed += 1
@@ -577,6 +607,41 @@ def tally_tests(tests, all_tests, implemented_features):
         "not_implemented": not_implemented,
         "total": len(tests) + filtered_out,
     }
+
+
+def compute_feature_details(feature_scores, tests):
+    """Per-feature detail: score, valid test count, total test count, status.
+
+    Returns {feature: {"score": float, "valid": int, "total": int, "status": str}}
+    """
+    buckets = {}
+    for t in tests:
+        key = test_aggregation_key(t)
+        buckets.setdefault(key, []).append(t)
+
+    details = {}
+    for key, score in feature_scores.items():
+        key_tests = buckets.get(key, [])
+        total = len(key_tests)
+        valid = sum(1 for t in key_tests if t["score"] >= PASS_THRESHOLD)
+        all_not_found = all(
+            "not found" in str(t.get("actual_result", "")) for t in key_tests
+        )
+        if all_not_found and key_tests:
+            status = "not_implemented"
+        elif score >= PASS_THRESHOLD:
+            status = "validated"
+        elif score >= PARTIAL_THRESHOLD:
+            status = "almost"
+        else:
+            status = "missed"
+        details[key] = {
+            "score": score,
+            "valid": valid,
+            "total": total,
+            "status": status,
+        }
+    return details
 
 
 # ─── Report generators ─────────────────────────────────────────────────────
@@ -691,6 +756,7 @@ def report_json(
     elapsed,
     tally,
     test_tally,
+    feature_details,
 ):
     """Build the JSON output dict."""
     data = {
@@ -705,6 +771,7 @@ def report_json(
         "test_tally": test_tally,
         "features": implemented_features,
         "features_score": feature_scores,
+        "features_detail": feature_details,
         "tests_by_milestone": group_by_milestone(tests),
         "time": elapsed,
     }
@@ -873,6 +940,13 @@ def build_parser():
         help="Per-command timeout in seconds (default: 10)",
     )
     p.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel test workers (default: 1)",
+    )
+    p.add_argument(
         "--check", action="store_true", help="Validate inputs without running tests"
     )
 
@@ -905,6 +979,7 @@ def main():
         "jacoco": jacoco_path,
         "debug": args.debug,
         "timeout": args.timeout,
+        "workers": args.workers,
         "test_dir": test_dir,
     }
 
@@ -1010,6 +1085,7 @@ def main():
     feature_scores = aggregate_feature_scores(filtered, implemented_features)
     milestone_scores = aggregate_milestone_scores(filtered)
     total_score = average_score(filtered)
+    feature_details = compute_feature_details(feature_scores, filtered)
     tally = tally_features(feature_scores, filtered, test_suite, implemented_features)
     test_tally = tally_tests(filtered, test_suite, implemented_features)
 
@@ -1036,6 +1112,7 @@ def main():
             elapsed,
             tally,
             test_tally,
+            feature_details,
         )
         output_text = json.dumps(data, indent=2, default=str)
     else:

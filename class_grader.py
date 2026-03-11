@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import concurrent.futures
 import copy
 import json
 import os
@@ -137,6 +138,7 @@ def run_autograder(
     coverage=False,
     jacoco=None,
     timeout=10,
+    workers=1,
     debug=False,
     dryrun=False,
 ):
@@ -145,6 +147,7 @@ def run_autograder(
     Args:
         test_dir: --test-dir for autograder (CWD for Pandora, test file resolution)
         pandora_dir: -P for autograder (manifest/jar/jacoco resolution)
+        workers: number of parallel test workers inside the autograder
         dryrun: if True, print the command instead of running it
 
     Returns (dict, None) on success or (None, error_string) on failure.
@@ -162,6 +165,8 @@ def run_autograder(
         cmd += ["-j", jacoco]
     if timeout != 10:
         cmd += ["-T", str(timeout)]
+    if workers > 1:
+        cmd += ["-w", str(workers)]
     if debug:
         cmd.append("-d")
     cmd.append(jar)
@@ -171,9 +176,7 @@ def run_autograder(
         return None, None
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout * 60)
-    except subprocess.TimeoutExpired:
-        return None, "autograder process timed out"
+        proc = subprocess.run(cmd, capture_output=True, text=True)
     except Exception as e:
         return None, str(e)
 
@@ -364,6 +367,7 @@ def validate_test_suite(group_name, group_path, ref_jar, cfg):
         coverage=False,
         jacoco=cfg.get("jacoco"),
         timeout=cfg.get("timeout", 10),
+        workers=cfg.get("workers_per_group", 8),
         debug=cfg.get("debug", False),
         dryrun=cfg.get("dryrun", False),
     )
@@ -432,6 +436,25 @@ def extract_feature_scores(data, all_features, manifest_features):
     return result
 
 
+def extract_feature_details(data, all_features, manifest_features):
+    """From autograder JSON, return {feature: {score, valid, total, status} | None}.
+
+    Uses the autograder's own classification (features_detail) so that badges
+    and tallies are always consistent.
+    """
+    fd = data.get("features_detail", {}) if data else {}
+    manifest_set = set(manifest_features or [])
+    result = {}
+    for feat in all_features:
+        if feat not in manifest_set:
+            result[feat] = None
+        elif feat in fd:
+            result[feat] = fd[feat]
+        else:
+            result[feat] = {"score": 0.0, "valid": 0, "total": 0, "status": "missed"}
+    return result
+
+
 # ─── Precision / Recall / F1 ───────────────────────────────────────────────
 
 
@@ -469,7 +492,10 @@ def compute_classification_metrics(tester_verdicts, ground_truth):
     )
     agreement = (tp + tn) / total if total > 0 else 0.0
 
-    return {"precision": precision, "recall": recall, "f1": f1, "agreement": agreement}
+    return {
+        "tp": tp, "fp": fp, "tn": tn, "fn": fn,
+        "precision": precision, "recall": recall, "f1": f1, "agreement": agreement,
+    }
 
 
 def compute_pairwise_agreement(tester_verdicts, ground_truth, tested_group):
@@ -489,10 +515,22 @@ def compute_pairwise_agreement(tester_verdicts, ground_truth, tested_group):
 # ─── Markdown report helpers ───────────────────────────────────────────────
 
 
-def md_feature_group_matrix(title, all_features, group_names, score_matrix):
+STATUS_BADGE = {
+    "validated": "🟢",
+    "almost": "🟡",
+    "missed": "🔴",
+    "not_implemented": "⚪️",
+}
+
+
+def md_feature_group_matrix(title, all_features, group_names, score_matrix,
+                            detail_matrix=None):
     """Build a markdown feature x group matrix.
 
     score_matrix: {group: {feature: score_or_None}}
+    detail_matrix: {group: {feature: {score, valid, total, status} | None}}
+                   When provided, badges come from the autograder's status
+                   and each cell shows valid/total.
     """
     lines = [f"## {title}", ""]
     short_names = [shorten_team_name(g) for g in group_names]
@@ -502,34 +540,52 @@ def md_feature_group_matrix(title, all_features, group_names, score_matrix):
     for feat in all_features:
         cells = []
         for g in group_names:
-            score = score_matrix.get(g, {}).get(feat)
-            if score is None:
-                cells.append("⚪️")
+            detail = (detail_matrix or {}).get(g, {}).get(feat)
+            if detail is not None:
+                # Use autograder's own classification
+                b = STATUS_BADGE.get(detail["status"], "🔴")
+                cells.append(f"{b} {detail['valid']}/{detail['total']}")
             else:
-                cells.append(badge(score))
+                # Fallback: score-only (or not declared)
+                score = score_matrix.get(g, {}).get(feat)
+                if score is None:
+                    cells.append("⚪️")
+                else:
+                    cells.append(badge(score))
         lines.append(f"| {feat} | " + " | ".join(cells) + " |")
     lines.append("")
     return "\n".join(lines)
 
 
 def md_metrics_table(title, group_metrics):
-    """One row per group with precision/recall/f1/agreement."""
-    lines = [f"## {title}", ""]
-    lines.append("| Team | Precision | Recall | F1 | Agreement |")
-    lines.append("|------|-----------|--------|----|-----------|")
+    """One row per group with confusion matrix counts + precision/accuracy/recall."""
+    lines = []
+    lines.append(
+        "| Team | Detected & Correct (TP) | Not Detected & Correct (FN) "
+        "| Detected & Incorrect (FP) | Not Detected & Incorrect (TN) "
+        "| Precision | Recall | Accuracy |"
+    )
+    lines.append(
+        "|------|:-----------------------:|:---------------------------:"
+        "|:-------------------------:|:-----------------------------:"
+        "|:---------:|:------:|:--------:|"
+    )
     for gname, m in sorted(group_metrics.items(), key=lambda x: -x[1]["f1"]):
         short_name = shorten_team_name(gname)
         lines.append(
-            f"| {short_name} | {m['precision']:.2f} | {m['recall']:.2f} "
-            f"| {m['f1']:.2f} | {m['agreement']:.2f} |"
+            f"| {short_name} "
+            f"| {m['tp']} | {m['fn']} | {m['fp']} | {m['tn']} "
+            f"| {m['precision']:.2f} | {m['recall']:.2f} | {m['agreement']:.2f} |"
         )
+    lines.append("")
+    lines.append(f": {title} " + "{.striped .hover .borderless .responsive}")
     lines.append("")
     return "\n".join(lines)
 
 
 def md_agreement_heatmap(title, group_names, pairwise):
     """Tester x tested agreement heatmap."""
-    lines = [f"## {title}", ""]
+    lines = []
     short_names = [shorten_team_name(g) for g in group_names]
     header = "| tested → | " + " | ".join(short_names) + " |"
     sep = "|----------|" + "|".join(["------"] * len(group_names)) + "|"
@@ -543,6 +599,8 @@ def md_agreement_heatmap(title, group_names, pairwise):
                 val = pairwise.get((tester, tested), 0)
                 cells.append(f"{val:.2f}")
         lines.append(f"| {short_names[i]} | " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append(f": {title} " + "{.striped .hover .borderless .responsive}")
     lines.append("")
     return "\n".join(lines)
 
@@ -592,6 +650,8 @@ def md_summary_table(group_names, group_data):
             f"| {f1:.2f} | {valid}/{total} | {removed} |"
         )
     lines.append("")
+    lines.append(": Class Summary {.primary .striped .hover .borderless .responsive}")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -599,31 +659,12 @@ def md_summary_table(group_names, group_data):
 
 
 def load_yaml_config(path):
-    """Load a YAML configuration file and return a dict of settings.
-
-    Raises SystemExit with a clear message on errors.
-    """
+    """Load a YAML configuration file and return a dict."""
     if yaml is None:
-        print(
-            "Error: PyYAML is required to use --config. Install it with: pip install pyyaml"
-        )
+        print("ERROR: PyYAML is required for --config. Install with: pip install pyyaml")
         sys.exit(1)
-
-    try:
-        with open(path, "r") as f:
-            cfg = yaml.safe_load(f)
-    except FileNotFoundError:
-        print(f"Error: config file not found: {path}")
-        sys.exit(1)
-    except yaml.YAMLError as e:
-        print(f"Error: invalid YAML in {path}: {e}")
-        sys.exit(1)
-
-    if not isinstance(cfg, dict):
-        print(f"Error: config file must be a YAML mapping, got {type(cfg).__name__}")
-        sys.exit(1)
-
-    return cfg
+    with open(path, "r") as f:
+        return yaml.safe_load(f) or {}
 
 
 def build_parser():
@@ -715,6 +756,8 @@ _YAML_KEY_MAP = {
     "jacoco": "jacoco",
     "json": "json",
     "timeout": "timeout",
+    "workers": "workers",
+    "workers_per_group": "workers_per_group",
     "debug": "debug",
     "fast": "fast",
     "phases": "phases",
@@ -738,6 +781,10 @@ def main():
         args.output = "."
     if args.timeout is None:
         args.timeout = 10
+    if not hasattr(args, "workers") or args.workers is None:
+        args.workers = 1
+    if not hasattr(args, "workers_per_group") or args.workers_per_group is None:
+        args.workers_per_group = 8
     if args.coverage is None:
         args.coverage = False
     if args.json is None:
@@ -799,9 +846,13 @@ def main():
         "coverage": args.coverage,
         "jacoco": args.jacoco,
         "timeout": args.timeout,
+        "workers": args.workers,
+        "workers_per_group": args.workers_per_group,
         "debug": args.debug,
         "dryrun": args.dryrun,
     }
+
+    concurrent_groups = max(args.workers // args.workers_per_group, 1)
 
     groups = discover_groups(class_dir)
     if not groups:
@@ -817,6 +868,7 @@ def main():
     # Storage for results
     teacher_eval = {}  # group -> autograder JSON result
     teacher_scores = {}  # group -> {feature: score|None}
+    teacher_details = {}  # group -> {feature: {score, valid, total, status}|None}
     self_eval = {}  # group -> autograder JSON result
     validation_results = {}  # group -> (data, valid, invalid)
     group_manifests = {}  # group -> manifest features list
@@ -829,19 +881,14 @@ def main():
     # ── 3.1 Teacher Tests → Student Pandoras ──────────────────────────
     if phases["teacher_evaluation"]:
         print("\n=== Teacher Tests → Student Pandoras ===")
-        for gname, gpath in groups:
+
+        def _teacher_eval_one(gname, gpath):
             jar = group_jar(gpath)
             manifest_path = group_manifest(gpath)
             if not os.path.isfile(jar):
-                print(f"  [{gname}] SKIP: target/pandora.jar not found")
-                continue
+                return gname, "SKIP_JAR", None, None
             if not os.path.isfile(manifest_path):
-                print(f"  [{gname}] SKIP: manifest.json not found")
-                continue
-
-            mfeats = group_manifests[gname]
-
-            print(f"  [{gname}] running teacher tests...")
+                return gname, "SKIP_MANIFEST", None, None
             data, err = run_autograder(
                 jar=jar,
                 test_suite=teacher_tests,
@@ -850,22 +897,40 @@ def main():
                 coverage=cfg["coverage"],
                 jacoco=cfg.get("jacoco"),
                 timeout=cfg["timeout"],
+                workers=cfg["workers_per_group"],
                 debug=cfg["debug"],
                 dryrun=cfg["dryrun"],
             )
-            if data is None and err is None:
-                continue
-            if err:
-                print(f"  [{gname}] ERROR: {err}")
-                continue
-            teacher_eval[gname] = data
-            teacher_scores[gname] = extract_feature_scores(data, all_features, mfeats)
-            ft = data.get("tally", {})
-            tt = data.get("test_tally", {})
-            print(
-                f"  [{gname}] total: {data.get('total_score', 0):.2f}  "
-                f"features: {_fmt_tally(ft)}  tests: {_fmt_tally(tt)}"
-            )
+            return gname, None, data, err
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_groups) as pool:
+            futures = {
+                pool.submit(_teacher_eval_one, gname, gpath): gname
+                for gname, gpath in groups
+            }
+            for future in concurrent.futures.as_completed(futures):
+                gname, skip, data, err = future.result()
+                if skip == "SKIP_JAR":
+                    print(f"  [{gname}] SKIP: target/pandora.jar not found")
+                    continue
+                if skip == "SKIP_MANIFEST":
+                    print(f"  [{gname}] SKIP: manifest.json not found")
+                    continue
+                if data is None and err is None:
+                    continue
+                if err:
+                    print(f"  [{gname}] ERROR: {err}")
+                    continue
+                mfeats = group_manifests[gname]
+                teacher_eval[gname] = data
+                teacher_scores[gname] = extract_feature_scores(data, all_features, mfeats)
+                teacher_details[gname] = extract_feature_details(data, all_features, mfeats)
+                ft = data.get("tally", {})
+                tt = data.get("test_tally", {})
+                print(
+                    f"  [{gname}] total: {data.get('total_score', 0):.2f}  "
+                    f"features: {_fmt_tally(ft)}  tests: {_fmt_tally(tt)}"
+                )
 
     # Print skipped phases
     skipped = [k for k, v in phases.items() if not v]
@@ -875,58 +940,79 @@ def main():
     # ── 3.2 Student Tests → Teacher Pandora (validation) ─────────────
     if phases["validation"]:
         print("\n=== Student Tests → Teacher Pandora (validation) ===")
-        for gname, gpath in groups:
+
+        def _validate_one(gname, gpath):
             ts = group_test_suite(gpath)
             if not os.path.isfile(ts):
-                print(f"  [{gname}] SKIP: no testSuite.json")
-                continue
-
-            print(f"  [{gname}] validating test suite...")
+                return gname, "SKIP", None, None, None, None
             data, valid, invalid, removed = validate_test_suite(
                 gname, gpath, ref_jar, cfg
             )
-            validation_results[gname] = (data, valid, invalid, removed)
-            if data:
-                print(
-                    f"  [{gname}] valid: {len(valid)}, invalid: {len(invalid)}, removed: {len(removed)}"
-                )
-            elif removed:
-                print(
-                    f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)"
-                )
+            return gname, None, data, valid, invalid, removed
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_groups) as pool:
+            futures = {
+                pool.submit(_validate_one, gname, gpath): gname
+                for gname, gpath in groups
+            }
+            for future in concurrent.futures.as_completed(futures):
+                gname, skip, data, valid, invalid, removed = future.result()
+                if skip:
+                    print(f"  [{gname}] SKIP: no testSuite.json")
+                    continue
+                validation_results[gname] = (data, valid, invalid, removed)
+                if data:
+                    print(
+                        f"  [{gname}] valid: {len(valid)}, invalid: {len(invalid)}, removed: {len(removed)}"
+                    )
+                elif removed:
+                    print(
+                        f"  [{gname}] all tests removed ({len(removed)} broken/non-whitelisted)"
+                    )
 
     # ── Self-evaluation (student tests → own Pandora) ────────────────
     if phases["self_evaluation"]:
         print("\n=== Self-Evaluation (Student Tests → Own Pandora) ===")
-        for gname, gpath in groups:
+
+        def _self_eval_one(gname, gpath):
             jar = group_jar(gpath)
             cleaned_ts = group_cleaned_test_suite(gpath)
             manifest_path = group_manifest(gpath)
             if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
-                continue
-
+                return gname, "SKIP_FILES", None, None
             if not os.path.isfile(cleaned_ts):
-                print(f"  [{gname}] SKIP: no cleaned test suite available")
-                continue
-
-            print(f"  [{gname}] self-evaluation (using cleaned tests)...")
-
+                return gname, "SKIP_CLEANED", None, None
             data, err = run_autograder(
                 jar=jar,
                 test_suite=cleaned_ts,
                 manifest=manifest_path,
                 test_dir=gpath,
                 timeout=cfg["timeout"],
+                workers=cfg["workers_per_group"],
                 debug=cfg["debug"],
                 dryrun=cfg["dryrun"],
             )
-            if data is None and err is None:
-                continue
-            if err:
-                print(f"  [{gname}] ERROR: {err}")
-                continue
-            self_eval[gname] = data
-            print(f"  [{gname}] self-score: {data.get('total_score', 0):.2f}")
+            return gname, None, data, err
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_groups) as pool:
+            futures = {
+                pool.submit(_self_eval_one, gname, gpath): gname
+                for gname, gpath in groups
+            }
+            for future in concurrent.futures.as_completed(futures):
+                gname, skip, data, err = future.result()
+                if skip == "SKIP_FILES":
+                    continue
+                if skip == "SKIP_CLEANED":
+                    print(f"  [{gname}] SKIP: no cleaned test suite available")
+                    continue
+                if data is None and err is None:
+                    continue
+                if err:
+                    print(f"  [{gname}] ERROR: {err}")
+                    continue
+                self_eval[gname] = data
+                print(f"  [{gname}] self-score: {data.get('total_score', 0):.2f}")
 
     # ── 3.3 Cross-Testing ────────────────────────────────────────────
     if phases["cross_testing"]:
@@ -944,14 +1030,13 @@ def main():
         tester_verdicts = {}  # tester -> {(tested_group, feature): bool}
         cross_results = {}  # (tester, tested) -> autograder JSON
 
+        # Build all (tester, tested) pairs
+        cross_jobs = []
         for tester_name, tester_path in groups:
             cleaned_ts = group_cleaned_test_suite(tester_path)
             if not os.path.isfile(cleaned_ts):
                 continue
-
             tester_verdicts[tester_name] = {}
-            print(f"  [{tester_name}] cross-testing against other groups...")
-
             for tested_name, tested_path in groups:
                 if tested_name == tester_name:
                     continue
@@ -959,22 +1044,31 @@ def main():
                 manifest_path = group_manifest(tested_path)
                 if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
                     continue
+                cross_jobs.append((tester_name, tester_path, tested_name, jar, manifest_path, cleaned_ts))
 
-                data, err = run_autograder(
-                    jar=jar,
-                    test_suite=cleaned_ts,
-                    manifest=manifest_path,
-                    test_dir=tester_path,
-                    timeout=cfg["timeout"],
-                    debug=cfg["debug"],
-                    dryrun=cfg["dryrun"],
-                )
+        def _cross_test_one(tester_name, tester_path, tested_name, jar, manifest_path, cleaned_ts):
+            data, err = run_autograder(
+                jar=jar,
+                test_suite=cleaned_ts,
+                manifest=manifest_path,
+                test_dir=tester_path,
+                timeout=cfg["timeout"],
+                workers=cfg["workers_per_group"],
+                debug=cfg["debug"],
+                dryrun=cfg["dryrun"],
+            )
+            return tester_name, tested_name, data, err
+
+        print(f"  Running {len(cross_jobs)} cross-test pairs...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_groups) as pool:
+            futures = [pool.submit(_cross_test_one, *job) for job in cross_jobs]
+            for future in concurrent.futures.as_completed(futures):
+                tester_name, tested_name, data, err = future.result()
                 if data is None and err is None:
                     continue
                 if err:
                     print(f"    [{tester_name} → {tested_name}] ERROR: {err}")
                     continue
-
                 cross_results[(tester_name, tested_name)] = data
                 fs = data.get("features_score", {})
                 tested_manifest = group_manifests.get(tested_name, [])
@@ -994,23 +1088,8 @@ def main():
                 tester_verdicts[tester_name], ground_truth
             )
             group_metrics[tester_name] = metrics
-
-        # Pairwise agreement
-        pairwise_agreement = {}
-        for tester_name in group_names:
-            if tester_name not in tester_verdicts:
-                continue
-            for tested_name in group_names:
-                if tester_name == tested_name:
-                    continue
-                pairwise_agreement[(tester_name, tested_name)] = (
-                    compute_pairwise_agreement(
-                        tester_verdicts[tester_name], ground_truth, tested_name
-                    )
-                )
     else:
         group_metrics = {}
-        pairwise_agreement = {}
 
     # ── Build per-group JSON data ────────────────────────────────────
     group_data = {}
@@ -1020,7 +1099,8 @@ def main():
         vr = validation_results.get(gname, (None, [], [], []))
         _, valid, invalid, removed = vr
         metrics = group_metrics.get(
-            gname, {"precision": 0, "recall": 0, "f1": 0, "agreement": 0}
+            gname, {"tp": 0, "fp": 0, "tn": 0, "fn": 0,
+                    "precision": 0, "recall": 0, "f1": 0, "agreement": 0}
         )
 
         group_data[gname] = {
@@ -1028,6 +1108,7 @@ def main():
             "version": te.get("version", "?"),
             "feature_tally": te.get("tally", {}),
             "test_tally": te.get("test_tally", {}),
+            "features_detail": te.get("features_detail", {}),
             "teacher_evaluation": {
                 "features_score": teacher_scores.get(gname, {}),
                 "total_score": te.get("total_score", 0),
@@ -1043,10 +1124,14 @@ def main():
                 "valid_tests": len(valid),
                 "invalid_tests": len(invalid),
                 "removed_tests": len(removed),
+                "tp": metrics.get("tp", 0),
+                "fp": metrics.get("fp", 0),
+                "tn": metrics.get("tn", 0),
+                "fn": metrics.get("fn", 0),
                 "precision": metrics.get("precision", 0),
                 "recall": metrics.get("recall", 0),
                 "f1": metrics.get("f1", 0),
-                "agreement": metrics.get("agreement", 0),
+                "accuracy": metrics.get("agreement", 0),
             },
             "coverage": {
                 "teacher_suite": None,
@@ -1088,7 +1173,14 @@ def main():
     teacher_tests_name = os.path.basename(teacher_tests)
 
     report_parts = []
-    report_parts.append("# Class Grader Report\n")
+    report_parts.append("""\
+---
+title: "Class Grader Report"
+format:
+  html:
+    page-layout: full
+---
+""")
 
     # Add CSS for vertical column headers in Quarto
     css_block = """```{=html}
@@ -1126,6 +1218,8 @@ table thead th:first-child {
 | 🔴 | **Missed** — the feature was attempted but the output is wrong | score < 0.5 |
 | ⚪️ | **Not implemented / not declared** — the feature is not listed in the team's manifest or was not found in the output | — |
 
+: Legend {.borderless .responsive}
+
 """
     )
 
@@ -1154,6 +1248,7 @@ undeclared features appear as ⚪️.
                 all_features,
                 group_names,
                 teacher_scores,
+                detail_matrix=teacher_details,
             )
         )
 
@@ -1196,32 +1291,23 @@ incorrect implementations.
 
 Each team's cleaned test suite is run against **every other team's** Pandora. \
 The results are compared to the ground truth (teacher evaluation) to compute \
-classification metrics:
+confusion matrix counts and classification metrics:
 
-| Metric | Definition |
-|--------|------------|
-| **Precision** | Of the features your tests mark as "passing", how many actually pass? High precision = few false positives. |
-| **Recall** | Of the features that actually pass, how many do your tests detect? High recall = few false negatives. |
-| **F1** | Harmonic mean of precision and recall — the single best measure of test quality. |
-| **Agreement** | Overall rate at which your tests agree with the teacher evaluation. |
+| Column | Meaning |
+|--------|----------|
+| **Detected & Correct (TP)** | Feature correctly implemented AND your tests detect it |
+| **Not Detected & Correct (FN)** | Feature correctly implemented BUT your tests miss it |
+| **Detected & Incorrect (FP)** | Feature incorrectly implemented BUT your tests say it passes |
+| **Not Detected & Incorrect (TN)** | Feature incorrectly implemented AND your tests correctly reject it |
+| **Precision** | TP / (TP + FP) — of features your tests accept, how many are truly correct? |
+| **Recall** | TP / (TP + FN) — of features that are truly correct, how many do your tests detect? |
+| **Accuracy** | (TP + TN) / total — overall rate of correct classifications |
 
-"""
-            )
-            report_parts.append(md_metrics_table("Results", group_metrics))
-        if pairwise_agreement:
-            report_parts.append(
-                """\
-## Pairwise Agreement Heatmap
-
-Each cell shows the agreement rate between one team's tests (row) and \
-another team's Pandora (column). A value of 1.00 means the tester's \
-tests agree with the teacher evaluation for every feature of the tested team.
+: Column Definitions {.borderless .responsive}
 
 """
             )
-            report_parts.append(
-                md_agreement_heatmap("Results", group_names, pairwise_agreement)
-            )
+            report_parts.append(md_metrics_table("Cross-Testing Results", group_metrics))
 
     # ── Class Summary ────────────────────────────────────────────────
     report_parts.append(
@@ -1243,8 +1329,49 @@ items fall in each category:
     )
     report_parts.append(md_summary_table(group_names, group_data))
 
+    # Build summary data for the interactive table
+    summary_rows = []
+    for gname in group_names:
+        d = group_data.get(gname, {})
+        ft = d.get("feature_tally", {})
+        tt = d.get("test_tally", {})
+        tq = d.get("test_quality", {})
+        summary_rows.append({
+            "Team": shorten_team_name(gname),
+            "Version": d.get("version", "?"),
+            "Teacher Score": round(d.get("teacher_evaluation", {}).get("total_score", 0), 2),
+            "F\u2705": ft.get("validated", 0),
+            "F\U0001f7e1": ft.get("almost", 0),
+            "F\u274c": ft.get("missed", 0),
+            "F\u26aa": ft.get("not_implemented", 0),
+            "T\u2705": tt.get("validated", 0),
+            "T\U0001f7e1": tt.get("almost", 0),
+            "T\u274c": tt.get("missed", 0),
+            "T\u26aa": tt.get("not_implemented", 0),
+            "F1": round(tq.get("f1", 0), 2),
+            "Valid Tests": tq.get("valid_tests", 0),
+            "Total Tests": tq.get("total_tests", 0),
+            "Removed": tq.get("removed_tests", 0),
+        })
+
+    summary_json_path = os.path.join(output_dir, "summary_data.json")
+    with open(summary_json_path, "w") as f:
+        json.dump(summary_rows, f, ensure_ascii=False)
+
+    report_parts.append("""\
+```{python}
+#| echo: false
+import json, pandas as pd
+from itables import show
+
+with open("summary_data.json") as f:
+    summary = pd.DataFrame(json.load(f))
+show(summary, paging=False, classes="display compact", columnDefs=[{"className": "dt-center", "targets": "_all"}])
+```
+""")
+
     report_text = "\n".join(report_parts)
-    report_path = os.path.join(output_dir, "class_report.md")
+    report_path = os.path.join(output_dir, "class_report.qmd")
     with open(report_path, "w") as f:
         f.write(report_text)
     print(f"\nClass report written to {report_path}")
