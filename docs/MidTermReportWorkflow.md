@@ -5,57 +5,73 @@ How to generate (or regenerate) mid-term evaluation reports for the Pandora proj
 ## Prerequisites
 
 - Python 3 available as `python3`
-- Autograder has already been run, producing:
-  - `reports/json/pandora-2026-the_*.json` — one JSON per student group
-  - `reports/summary_data.json` — aggregated summary data
-  - `reports/class_report.qmd` — raw feature matrix (autograder output)
+- `pyyaml` installed (`pip install pyyaml`)
 
 ## Step-by-Step
 
-### 1. Generate individual group reports
+### 1. Update student repos & build
 
 ```bash
-cd /path/to/autograder_python
-python3 reports/_gen_reports.py
+find ../2026/pandora-2026-submissions -name pom.xml -print0 \
+  | xargs -0 -n1 dirname | sort -u \
+  | while IFS= read -r d; do (cd "$d" && git pull && mvn package); done
 ```
 
-This reads all JSON data from `reports/json/` and `reports/summary_data.json`, then generates one `.qmd` file per group in `reports/groups/`.
+### 2. Run class_grader (produces JSON)
 
-**Options:**
-```
---json-dir DIR     Directory with per-group JSONs (default: reports/json)
---summary PATH     Path to summary_data.json (default: reports/summary_data.json)
---out-dir DIR      Output directory for .qmd files (default: reports/groups)
+```bash
+python3 class_grader.py -C config.yml
 ```
 
-### 2. Write/update the class summary
+This runs all evaluation phases (teacher eval, validation, self-eval, cross-testing, commits, coverage if enabled) and writes structured JSON output:
 
-The class summary (`reports/report_summary.qmd`) is written manually (or with AI assistance) based on:
+```
+reports/
+├── teacher_eval/      _meta.json + _summary.json + per-group .json
+├── validation/
+├── self_eval/
+├── cross_testing/
+├── commits/
+├── coverage/          (if enabled)
+└── groups/            combined per-group .json (all phases merged)
+```
 
-- The data in `reports/summary_data.json` (rankings, scores, feature tallies)
+See `docs/output_schema.md` for the full JSON schema.
+
+### 3. Generate reports (reads JSON → .qmd)
+
+```bash
+python3 report_generator.py reports/
+```
+
+This reads the JSON from step 2 and generates:
+- `reports/class_report.qmd` — class-wide summary with feature matrices, rankings, commit analysis
+- `reports/groups/<group>.qmd` — individual group reports
+
+### 4. Write/update the class summary narrative
+
+The class summary report (`reports/report_summary.qmd`) is written manually (or with AI assistance) based on:
+
+- The data in the JSON output and `_summary.json` files
 - Patterns visible across the individual group reports
-- Teacher pointers stored in the memory file (see below)
 
-The summary should include:
-- Scoring methodology (🟢 count as primary metric, teacher score as provisional)
+The summary typically includes:
+- Scoring methodology
 - Class-at-a-glance statistics
-- Tier-based ranking tables (Advanced ≥60%, Progressing 35-59%, Developing 15-34%, Getting Started <15%)
-- Key patterns discovered across the class
-- Common issues & actionable advice (numbered sections)
-- Awards for notable achievements
+- Tier-based ranking tables
+- Common issues & actionable advice
 - Per-tier "What to focus on next" sections
-- Links to individual group reports
 
-### 3. Review and revise
+### 5. Render to HTML
 
-After generating both the group reports and the class summary:
-1. Re-read the class summary
-2. Cross-reference with the individual reports for accuracy
-3. Improve with deeper patterns discovered during the review
+```bash
+quarto render reports/class_report.qmd
+quarto render reports/groups/  # renders all group reports
+```
 
 ## Key Domain Knowledge
 
-**Critical facts** to keep in mind when writing reports — stored in `/memories/repo/pandora-teacher-pointers.md`:
+**Critical facts** to keep in mind when writing reports:
 
 - **No multi-file tests exist.** The 12/22→17/22→22/22 pattern is about **output modes** (full report vs feature mode), NOT multi-file handling.
 - **Teacher Score is provisional** — use 🟢 validated feature count as the primary metric.
@@ -68,18 +84,10 @@ After generating both the group reports and the class summary:
 
 | File | Purpose |
 |------|---------|
-| `reports/_gen_reports.py` | Generates individual group `.qmd` reports |
-| `reports/_parse_reports.py` | Quick data inspection/debugging utility |
-| `reports/report_summary.qmd` | Class-wide summary report (manual/AI) |
-| `reports/groups/*.qmd` | Individual group reports (auto-generated) |
-| `reports/summary_data.json` | Input: aggregated summary data |
-| `reports/json/pandora-2026-the_*.json` | Input: per-group detailed JSON |
-| `reports/class_report.qmd` | Input: raw feature matrix from autograder |
-
-## Rendering (Quarto)
-
-To render the reports to HTML:
-```bash
-quarto render reports/report_summary.qmd
-quarto render reports/groups/  # renders all group reports
-```
+| `class_grader.py` | Batch orchestration + grading → JSON output |
+| `report_generator.py` | Reads JSON → generates `.qmd` reports |
+| `autograder.py` | Per-group test execution engine |
+| `config.yml` | Configuration (dirs, phases, scoring, commits) |
+| `reports/groups/<group>.json` | Combined per-group JSON |
+| `reports/<phase>/_summary.json` | Class-level phase summaries |
+| `reports/_archive/` | Retired scripts (`_gen_reports.py`, `_parse_reports.py`) |

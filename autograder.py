@@ -405,7 +405,9 @@ def run_feature_tests(tests, jar_path, cfg):
     workers = cfg.get("workers", 1)
     if workers > 1 and len(tests) > 1:
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(_run_one_feature_test, t, jar_path, cfg) for t in tests]
+            futures = [
+                pool.submit(_run_one_feature_test, t, jar_path, cfg) for t in tests
+            ]
             concurrent.futures.wait(futures)
     else:
         for test in tests:
@@ -757,6 +759,7 @@ def report_json(
     tally,
     test_tally,
     feature_details,
+    test_suite_metadata=None,
 ):
     """Build the JSON output dict."""
     data = {
@@ -765,6 +768,7 @@ def report_json(
             "pandora": version_info["pandora"],
             "manifest": version_info["manifest"],
         },
+        "test_suite_metadata": test_suite_metadata,
         "milestone_scores": milestone_scores,
         "total_score": total_score,
         "tally": tally,
@@ -814,10 +818,21 @@ def check_inputs(test_suite_path, manifest_path, jar_path, test_dir=None):
     # Test suite
     try:
         with open(test_suite_path, "r") as f:
-            tests = json.load(f)
-        if not isinstance(tests, list):
-            errors.append("Test suite must be a JSON array.")
+            raw = json.load(f)
+        # Support dict-with-metadata or plain array format
+        if isinstance(raw, dict):
+            tests = raw.get("tests", [])
+        elif isinstance(raw, list):
+            tests = raw
         else:
+            tests = None
+            errors.append(
+                "Test suite must be a JSON array or an object with a 'tests' key."
+            )
+        if tests is not None and not isinstance(tests, list):
+            errors.append("Test suite 'tests' value must be a JSON array.")
+            tests = None
+        if tests is not None:
             # Collect invalid features from test suite
             invalid_test_features = set()
 
@@ -996,7 +1011,7 @@ def main():
     # ── Load inputs ───────────────────────────────────────────────────
     try:
         with open(test_suite_path, "r") as f:
-            test_suite = json.load(f)
+            raw_suite = json.load(f)
     except FileNotFoundError:
         print(f"ERROR: Test suite file not found: {test_suite_path}")
         sys.exit(1)
@@ -1004,6 +1019,14 @@ def main():
         print(f"ERROR: Test suite is not valid JSON: {e}")
         print(f"       File: {test_suite_path}")
         sys.exit(1)
+
+    # Support dict-with-metadata or plain array format
+    if isinstance(raw_suite, dict):
+        test_suite_metadata = raw_suite.get("metadata")
+        test_suite = raw_suite.get("tests", [])
+    else:
+        test_suite_metadata = None
+        test_suite = raw_suite
 
     try:
         with open(manifest_path, "r") as f:
@@ -1113,6 +1136,7 @@ def main():
             tally,
             test_tally,
             feature_details,
+            test_suite_metadata,
         )
         output_text = json.dumps(data, indent=2, default=str)
     else:
