@@ -329,6 +329,11 @@ def clean_test_suite(group_name, group_path):
             removed.append(test)
             continue
 
+        # Must have a result field to be runnable
+        if "result" not in test:
+            removed.append(test)
+            continue
+
         cleaned.append(test)
 
     # Write cleaned test suite
@@ -581,21 +586,57 @@ TIER_A_RE = re.compile(
 
 # Tier B — prefix dictionaries (easily expandable by the teacher)
 CONVENTIONAL_PREFIXES = [
-    "feat", "fix", "docs", "style", "refactor", "perf", "test",
-    "build", "ci", "chore", "revert",
+    "feat",
+    "fix",
+    "docs",
+    "style",
+    "refactor",
+    "perf",
+    "test",
+    "build",
+    "ci",
+    "chore",
+    "revert",
 ]
 EXTENDED_PREFIXES_EN = [
-    "feature", "update", "new", "add", "implement", "hotfix",
-    "release", "upgrade", "clean", "debug", "improve", "remove",
-    "rename", "move", "merge", "bump",
+    "feature",
+    "update",
+    "new",
+    "add",
+    "implement",
+    "hotfix",
+    "release",
+    "upgrade",
+    "clean",
+    "debug",
+    "improve",
+    "remove",
+    "rename",
+    "move",
+    "merge",
+    "bump",
 ]
 EXTENDED_PREFIXES_FR = [
-    "ajout", "correction", "modification", "modif", "suppression",
-    "implémentation", "amélioration", "création", "changement",
-    "nettoyage", "résolution", "sauvegarde", "MAJ", "mise à jour",
-    "develop", "option",
+    "ajout",
+    "correction",
+    "modification",
+    "modif",
+    "suppression",
+    "implémentation",
+    "amélioration",
+    "création",
+    "changement",
+    "nettoyage",
+    "résolution",
+    "sauvegarde",
+    "MAJ",
+    "mise à jour",
+    "develop",
+    "option",
 ]
-ALL_TIER_B_PREFIXES = CONVENTIONAL_PREFIXES + EXTENDED_PREFIXES_EN + EXTENDED_PREFIXES_FR
+ALL_TIER_B_PREFIXES = (
+    CONVENTIONAL_PREFIXES + EXTENDED_PREFIXES_EN + EXTENDED_PREFIXES_FR
+)
 _prefix_pattern = "|".join(re.escape(p) for p in ALL_TIER_B_PREFIXES)
 TIER_B_RE = re.compile(
     rf"^<?({_prefix_pattern})>?\s*[\[\(]?[^\]\)]*[\]\)]?\s*:\s*.+$",
@@ -604,17 +645,58 @@ TIER_B_RE = re.compile(
 
 # Tier C — descriptive (length >= 15 and contains a verb-like word)
 VERBS_EN = {
-    "add", "added", "implement", "implemented", "create", "created",
-    "remove", "removed", "change", "changed", "update", "updated",
-    "fix", "fixed", "resolve", "resolved", "clean", "cleaned",
-    "improve", "improved", "move", "moved", "rename", "renamed",
-    "delete", "deleted", "refactor", "refactored", "bump", "integrate",
+    "add",
+    "added",
+    "implement",
+    "implemented",
+    "create",
+    "created",
+    "remove",
+    "removed",
+    "change",
+    "changed",
+    "update",
+    "updated",
+    "fix",
+    "fixed",
+    "resolve",
+    "resolved",
+    "clean",
+    "cleaned",
+    "improve",
+    "improved",
+    "move",
+    "moved",
+    "rename",
+    "renamed",
+    "delete",
+    "deleted",
+    "refactor",
+    "refactored",
+    "bump",
+    "integrate",
 }
 VERBS_FR = {
-    "ajout", "ajouté", "correction", "corrigé", "modification",
-    "modifié", "mise", "suppression", "implémentation", "implémenté",
-    "amélioration", "création", "changement", "nettoyage", "résolution",
-    "sauvegarde", "recup", "dernière", "nouveau", "nouvelle",
+    "ajout",
+    "ajouté",
+    "correction",
+    "corrigé",
+    "modification",
+    "modifié",
+    "mise",
+    "suppression",
+    "implémentation",
+    "implémenté",
+    "amélioration",
+    "création",
+    "changement",
+    "nettoyage",
+    "résolution",
+    "sauvegarde",
+    "recup",
+    "dernière",
+    "nouveau",
+    "nouvelle",
 }
 TIER_C_VERBS = VERBS_EN | VERBS_FR
 
@@ -626,23 +708,47 @@ MERGE_RE = re.compile(r"^Merge (branch|pull request|remote-tracking|commit)")
 
 # Conventional prefix → category mapping
 _CATEGORY_MAP = {
-    "feat": "feat", "feature": "feat", "new": "feat", "add": "feat",
-    "implement": "feat", "ajout": "feat", "implémentation": "feat",
-    "création": "feat", "develop": "feat", "option": "feat",
-    "fix": "fix", "hotfix": "fix", "debug": "fix", "correction": "fix",
+    "feat": "feat",
+    "feature": "feat",
+    "new": "feat",
+    "add": "feat",
+    "implement": "feat",
+    "ajout": "feat",
+    "implémentation": "feat",
+    "création": "feat",
+    "develop": "feat",
+    "option": "feat",
+    "fix": "fix",
+    "hotfix": "fix",
+    "debug": "fix",
+    "correction": "fix",
     "résolution": "fix",
     "test": "test",
     "docs": "docs",
-    "style": "style", "clean": "style", "nettoyage": "style",
-    "refactor": "refactor", "rename": "refactor", "move": "refactor",
-    "amélioration": "refactor", "improve": "refactor",
+    "style": "style",
+    "clean": "style",
+    "nettoyage": "style",
+    "refactor": "refactor",
+    "rename": "refactor",
+    "move": "refactor",
+    "amélioration": "refactor",
+    "improve": "refactor",
     "perf": "perf",
-    "build": "build", "ci": "build", "release": "build",
-    "upgrade": "build", "bump": "build", "MAJ": "build",
+    "build": "build",
+    "ci": "build",
+    "release": "build",
+    "upgrade": "build",
+    "bump": "build",
+    "MAJ": "build",
     "mise à jour": "build",
-    "chore": "chore", "revert": "chore", "remove": "chore",
-    "suppression": "chore", "update": "chore",
-    "modification": "chore", "modif": "chore", "changement": "chore",
+    "chore": "chore",
+    "revert": "chore",
+    "remove": "chore",
+    "suppression": "chore",
+    "update": "chore",
+    "modification": "chore",
+    "modif": "chore",
+    "changement": "chore",
     "sauvegarde": "chore",
 }
 
@@ -704,9 +810,20 @@ def analyze_commits(group_path, commits_cfg=None):
     if commits_cfg is None:
         commits_cfg = {}
     teacher_email = commits_cfg.get("teacher_email", "dhmmasson")
-    template_hashes = set(commits_cfg.get("template_hashes", [
-        "3008cff", "7dda566", "40dc1ea", "2aa670a", "06f979c", "6506964", "99e6997",
-    ]))
+    template_hashes = set(
+        commits_cfg.get(
+            "template_hashes",
+            [
+                "3008cff",
+                "7dda566",
+                "40dc1ea",
+                "2aa670a",
+                "06f979c",
+                "6506964",
+                "99e6997",
+            ],
+        )
+    )
 
     git_dir = os.path.join(group_path, ".git")
     if not os.path.isdir(git_dir):
@@ -714,9 +831,7 @@ def analyze_commits(group_path, commits_cfg=None):
 
     cmd = ["git", "-C", group_path, "log", "--format=%H|||%ae|||%an|||%s"]
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
     except (subprocess.TimeoutExpired, OSError) as e:
         return {"error": str(e), "total_commits": 0}
@@ -760,7 +875,10 @@ def analyze_commits(group_path, commits_cfg=None):
             authors[email] = {
                 "name": name,
                 "commits": 0,
-                "tier_a": 0, "tier_b": 0, "tier_c": 0, "tier_d": 0,
+                "tier_a": 0,
+                "tier_b": 0,
+                "tier_c": 0,
+                "tier_d": 0,
                 "categories": {},
             }
         a = authors[email]
@@ -778,7 +896,10 @@ def analyze_commits(group_path, commits_cfg=None):
             poor_rate = a["tier_d"] / c
             volume = min(c / 30, 1.0)
             a["quality_score"] = round(
-                40 * descriptive_rate + 30 * structured_rate + 20 * (1 - poor_rate) + 10 * volume,
+                40 * descriptive_rate
+                + 30 * structured_rate
+                + 20 * (1 - poor_rate)
+                + 10 * volume,
                 1,
             )
         else:
@@ -803,7 +924,9 @@ def analyze_commits(group_path, commits_cfg=None):
     if len(commit_counts) > 1:
         mean_c = sum(commit_counts) / len(commit_counts)
         if mean_c > 0:
-            std_c = math.sqrt(sum((x - mean_c) ** 2 for x in commit_counts) / len(commit_counts))
+            std_c = math.sqrt(
+                sum((x - mean_c) ** 2 for x in commit_counts) / len(commit_counts)
+            )
             author_balance = round(max(0, 1 - std_c / mean_c), 4)
         else:
             author_balance = 0
@@ -815,7 +938,10 @@ def analyze_commits(group_path, commits_cfg=None):
     # Volume bonus
     volume = min(student_commits / 30, 1.0)
     quality_score = round(
-        40 * descriptive_rate + 30 * structured_rate + 20 * (1 - poor_rate) + 10 * volume,
+        40 * descriptive_rate
+        + 30 * structured_rate
+        + 20 * (1 - poor_rate)
+        + 10 * volume,
         1,
     )
 
@@ -887,11 +1013,13 @@ def analyze_commits(group_path, commits_cfg=None):
     for full_hash, email, name, subject in student_records:
         tier, _ = _classify_commit(subject)
         if tier == "D" and len(sample_poor) < 5:
-            sample_poor.append({
-                "hash": full_hash[:7],
-                "author": email,
-                "message": subject,
-            })
+            sample_poor.append(
+                {
+                    "hash": full_hash[:7],
+                    "author": email,
+                    "message": subject,
+                }
+            )
 
     return {
         "total_commits": total_commits,
@@ -940,6 +1068,7 @@ def parse_jacoco_xml(group_path, report_path=None):
 
     try:
         import xml.etree.ElementTree as ET
+
         tree = ET.parse(report_path)
         root = tree.getroot()
     except Exception as e:
@@ -984,7 +1113,9 @@ def parse_jacoco_xml(group_path, report_path=None):
         "branch_coverage": round(branch_cov, 4) if branch_cov is not None else None,
         "class_coverage": round(class_cov, 4) if class_cov is not None else None,
         "method_coverage": round(method_cov, 4) if method_cov is not None else None,
-        "instruction_coverage": round(instruction_cov, 4) if instruction_cov is not None else None,
+        "instruction_coverage": (
+            round(instruction_cov, 4) if instruction_cov is not None else None
+        ),
         "uncovered_classes": uncovered_classes,
         "packages": packages,
         "error": None,
@@ -998,8 +1129,6 @@ def _fmt_tally(tally):
         f"\U0001f534{tally['missed']} "
         f"\u26aa{tally['not_implemented']}"
     )
-
-
 
 
 # ─── CLI ────────────────────────────────────────────────────────────────────
@@ -1086,8 +1215,14 @@ def build_parser():
         "--phase",
         default=None,
         nargs="+",
-        choices=["teacher_evaluation", "validation", "self_evaluation",
-                 "cross_testing", "coverage", "commits"],
+        choices=[
+            "teacher_evaluation",
+            "validation",
+            "self_evaluation",
+            "cross_testing",
+            "coverage",
+            "commits",
+        ],
         help="Run only the specified phase(s). Overrides config phases.",
     )
     return p
@@ -1489,6 +1624,7 @@ def main():
                 return gname, "SKIP_FILES", None
             if not os.path.isfile(cleaned_ts):
                 return gname, "SKIP_CLEANED", None
+
             # Run autograder with coverage enabled
             data, err = run_autograder(
                 jar=jar,
@@ -1622,17 +1758,24 @@ def main():
         feat_detail = te.get("features_detail", {})
         t_tally = te.get("test_tally", {})
         ts_new, ts_breakdown = compute_teacher_score(
-            feat_detail, t_tally,
-            teacher_test_count, len(all_features),
+            feat_detail,
+            t_tally,
+            teacher_test_count,
+            len(all_features),
             scoring_cfg,
         )
         group_data[gname]["teacher_evaluation"]["teacher_score"] = ts_new
-        group_data[gname]["teacher_evaluation"]["teacher_score_breakdown"] = ts_breakdown
+        group_data[gname]["teacher_evaluation"][
+            "teacher_score_breakdown"
+        ] = ts_breakdown
         group_data[gname]["teacher_evaluation"]["test_suite"] = teacher_tests_name
-        group_data[gname]["teacher_evaluation"]["test_suite_metadata"] = test_suite_metadata
+        group_data[gname]["teacher_evaluation"][
+            "test_suite_metadata"
+        ] = test_suite_metadata
 
     # ── Write per-phase JSON directories ─────────────────────────────
     from datetime import datetime
+
     now = datetime.now().isoformat(timespec="seconds")
 
     def _write_phase_json(phase_name, phase_data_by_group, extra_meta=None):
@@ -1664,24 +1807,38 @@ def main():
                     "version": group_data[gname]["version"],
                     "test_suite": teacher_tests_name,
                     "test_suite_metadata": test_suite_metadata,
-                    "total_score": group_data[gname]["teacher_evaluation"]["total_score"],
-                    "teacher_score": group_data[gname]["teacher_evaluation"]["teacher_score"],
-                    "teacher_score_breakdown": group_data[gname]["teacher_evaluation"]["teacher_score_breakdown"],
-                    "milestone_scores": group_data[gname]["teacher_evaluation"]["milestone_scores"],
+                    "total_score": group_data[gname]["teacher_evaluation"][
+                        "total_score"
+                    ],
+                    "teacher_score": group_data[gname]["teacher_evaluation"][
+                        "teacher_score"
+                    ],
+                    "teacher_score_breakdown": group_data[gname]["teacher_evaluation"][
+                        "teacher_score_breakdown"
+                    ],
+                    "milestone_scores": group_data[gname]["teacher_evaluation"][
+                        "milestone_scores"
+                    ],
                     "feature_tally": group_data[gname]["feature_tally"],
                     "test_tally": group_data[gname]["test_tally"],
-                    "features_score": group_data[gname]["teacher_evaluation"]["features_score"],
+                    "features_score": group_data[gname]["teacher_evaluation"][
+                        "features_score"
+                    ],
                     "features_detail": group_data[gname]["features_detail"],
                     "manifest_features": group_data[gname]["manifest_features"],
                     "error": None,
                 }
-        _write_phase_json("teacher_eval", te_phase_data, {
-            "test_suite": teacher_tests_name,
-            "test_suite_metadata": test_suite_metadata,
-            "test_count": teacher_test_count,
-            "feature_count": len(all_features),
-            "ref_jar": os.path.basename(ref_jar),
-        })
+        _write_phase_json(
+            "teacher_eval",
+            te_phase_data,
+            {
+                "test_suite": teacher_tests_name,
+                "test_suite_metadata": test_suite_metadata,
+                "test_count": teacher_test_count,
+                "feature_count": len(all_features),
+                "ref_jar": os.path.basename(ref_jar),
+            },
+        )
 
     # Validation phase JSON
     if phases["validation"] and validation_results:
@@ -1701,8 +1858,14 @@ def main():
                 "valid_tests": len(valid),
                 "invalid_tests": len(invalid),
                 "removed_tests": len(removed),
-                "features_score": extract_feature_scores(vdata, all_features, mfeats) if vdata else {},
-                "features_detail": extract_feature_details(vdata, all_features, mfeats) if vdata else {},
+                "features_score": (
+                    extract_feature_scores(vdata, all_features, mfeats) if vdata else {}
+                ),
+                "features_detail": (
+                    extract_feature_details(vdata, all_features, mfeats)
+                    if vdata
+                    else {}
+                ),
                 "declared_features": mfeats,
                 "error": None,
             }
@@ -1765,7 +1928,9 @@ def main():
     print(f"\nPer-group combined JSON written to {groups_dir}/")
 
     # ── Write per-phase summaries ────────────────────────────────────
-    _write_phase_summaries(output_dir, group_data, group_names, all_features, phases, now)
+    _write_phase_summaries(
+        output_dir, group_data, group_names, all_features, phases, now
+    )
 
     # ── Print summary to stdout ──────────────────────────────────────
     print("\n" + "=" * 60)
@@ -1800,7 +1965,9 @@ def main():
     print(f"\nOutput written to {output_dir}/")
 
 
-def _write_phase_summaries(output_dir, group_data, group_names, all_features, phases, now):
+def _write_phase_summaries(
+    output_dir, group_data, group_names, all_features, phases, now
+):
     """Write _summary.json for each enabled phase."""
 
     if phases.get("teacher_evaluation"):
@@ -1809,7 +1976,12 @@ def _write_phase_summaries(output_dir, group_data, group_names, all_features, ph
             # Feature rankings
             feature_stats = {}
             for feat in all_features:
-                counts = {"validated": 0, "almost": 0, "missed": 0, "not_implemented": 0}
+                counts = {
+                    "validated": 0,
+                    "almost": 0,
+                    "missed": 0,
+                    "not_implemented": 0,
+                }
                 for gname in group_names:
                     fd = group_data.get(gname, {}).get("features_detail", {}).get(feat)
                     if fd is None:
@@ -1817,26 +1989,38 @@ def _write_phase_summaries(output_dir, group_data, group_names, all_features, ph
                     else:
                         counts[fd.get("status", "missed")] += 1
                 total = sum(counts.values())
-                counts["success_rate"] = round(counts["validated"] / total, 4) if total else 0
+                counts["success_rate"] = (
+                    round(counts["validated"] / total, 4) if total else 0
+                )
                 feature_stats[feat] = counts
 
             # Group rankings
             rankings = []
             for gname in group_names:
                 d = group_data.get(gname, {})
-                rankings.append({
-                    "team": gname,
-                    "short_name": shorten_team_name(gname),
-                    "teacher_score": d.get("teacher_evaluation", {}).get("teacher_score", 0),
-                    "total_score": d.get("teacher_evaluation", {}).get("total_score", 0),
-                    "validated_features": d.get("feature_tally", {}).get("validated", 0),
-                })
+                rankings.append(
+                    {
+                        "team": gname,
+                        "short_name": shorten_team_name(gname),
+                        "teacher_score": d.get("teacher_evaluation", {}).get(
+                            "teacher_score", 0
+                        ),
+                        "total_score": d.get("teacher_evaluation", {}).get(
+                            "total_score", 0
+                        ),
+                        "validated_features": d.get("feature_tally", {}).get(
+                            "validated", 0
+                        ),
+                    }
+                )
             rankings.sort(key=lambda x: -x["teacher_score"])
 
             # Class averages
             scores = [r["teacher_score"] for r in rankings]
             avg_score = sum(scores) / len(scores) if scores else 0
-            tallies = [group_data.get(g, {}).get("feature_tally", {}) for g in group_names]
+            tallies = [
+                group_data.get(g, {}).get("feature_tally", {}) for g in group_names
+            ]
             summary = {
                 "phase": "teacher_eval",
                 "date": now,
@@ -1845,10 +2029,24 @@ def _write_phase_summaries(output_dir, group_data, group_names, all_features, ph
                 "group_rankings": rankings,
                 "class_averages": {
                     "teacher_score": round(avg_score, 4),
-                    "validated": round(sum(t.get("validated", 0) for t in tallies) / max(len(tallies), 1), 1),
-                    "almost": round(sum(t.get("almost", 0) for t in tallies) / max(len(tallies), 1), 1),
-                    "missed": round(sum(t.get("missed", 0) for t in tallies) / max(len(tallies), 1), 1),
-                    "not_implemented": round(sum(t.get("not_implemented", 0) for t in tallies) / max(len(tallies), 1), 1),
+                    "validated": round(
+                        sum(t.get("validated", 0) for t in tallies)
+                        / max(len(tallies), 1),
+                        1,
+                    ),
+                    "almost": round(
+                        sum(t.get("almost", 0) for t in tallies) / max(len(tallies), 1),
+                        1,
+                    ),
+                    "missed": round(
+                        sum(t.get("missed", 0) for t in tallies) / max(len(tallies), 1),
+                        1,
+                    ),
+                    "not_implemented": round(
+                        sum(t.get("not_implemented", 0) for t in tallies)
+                        / max(len(tallies), 1),
+                        1,
+                    ),
                 },
             }
             with open(os.path.join(phase_dir, "_summary.json"), "w") as f:
@@ -1860,14 +2058,20 @@ def _write_phase_summaries(output_dir, group_data, group_names, all_features, ph
             rankings = []
             for gname in group_names:
                 tq = group_data.get(gname, {}).get("test_quality", {})
-                rankings.append({
-                    "team": gname,
-                    "short_name": shorten_team_name(gname),
-                    "valid_tests": tq.get("valid_tests", 0),
-                    "total_tests": tq.get("total_tests", 0),
-                    "removed_tests": tq.get("removed_tests", 0),
-                    "clean_rate": round(tq.get("cleaned_tests", 0) / max(tq.get("total_tests", 1), 1), 4),
-                })
+                rankings.append(
+                    {
+                        "team": gname,
+                        "short_name": shorten_team_name(gname),
+                        "valid_tests": tq.get("valid_tests", 0),
+                        "total_tests": tq.get("total_tests", 0),
+                        "removed_tests": tq.get("removed_tests", 0),
+                        "clean_rate": round(
+                            tq.get("cleaned_tests", 0)
+                            / max(tq.get("total_tests", 1), 1),
+                            4,
+                        ),
+                    }
+                )
             summary = {
                 "phase": "validation",
                 "date": now,
@@ -1883,22 +2087,30 @@ def _write_phase_summaries(output_dir, group_data, group_names, all_features, ph
             rankings = []
             for gname in group_names:
                 tq = group_data.get(gname, {}).get("test_quality", {})
-                rankings.append({
-                    "team": gname,
-                    "short_name": shorten_team_name(gname),
-                    "f1": tq.get("f1", 0),
-                    "precision": tq.get("precision", 0),
-                    "recall": tq.get("recall", 0),
-                })
+                rankings.append(
+                    {
+                        "team": gname,
+                        "short_name": shorten_team_name(gname),
+                        "f1": tq.get("f1", 0),
+                        "precision": tq.get("precision", 0),
+                        "recall": tq.get("recall", 0),
+                    }
+                )
             summary = {
                 "phase": "cross_testing",
                 "date": now,
                 "groups_count": len(group_names),
                 "group_rankings": sorted(rankings, key=lambda x: -x["f1"]),
                 "class_averages": {
-                    "f1": round(sum(r["f1"] for r in rankings) / max(len(rankings), 1), 4),
-                    "precision": round(sum(r["precision"] for r in rankings) / max(len(rankings), 1), 4),
-                    "recall": round(sum(r["recall"] for r in rankings) / max(len(rankings), 1), 4),
+                    "f1": round(
+                        sum(r["f1"] for r in rankings) / max(len(rankings), 1), 4
+                    ),
+                    "precision": round(
+                        sum(r["precision"] for r in rankings) / max(len(rankings), 1), 4
+                    ),
+                    "recall": round(
+                        sum(r["recall"] for r in rankings) / max(len(rankings), 1), 4
+                    ),
                 },
             }
             with open(os.path.join(phase_dir, "_summary.json"), "w") as f:
@@ -1912,16 +2124,20 @@ def _write_phase_summaries(output_dir, group_data, group_names, all_features, ph
                 c = group_data.get(gname, {}).get("commits")
                 if c:
                     gm = c.get("group_metrics", {})
-                    rankings.append({
-                        "team": gname,
-                        "short_name": shorten_team_name(gname),
-                        "student_commits": c.get("student_commits", 0),
-                        "quality_score": gm.get("quality_score", 0),
-                        "quality_grade": gm.get("quality_grade", "?"),
-                        "conventional_rate": gm.get("conventional_rate", 0),
-                        "poor_rate": gm.get("poor_rate", 0),
-                        "ai_detected": c.get("ai_detected", {}).get("detected", False),
-                    })
+                    rankings.append(
+                        {
+                            "team": gname,
+                            "short_name": shorten_team_name(gname),
+                            "student_commits": c.get("student_commits", 0),
+                            "quality_score": gm.get("quality_score", 0),
+                            "quality_grade": gm.get("quality_grade", "?"),
+                            "conventional_rate": gm.get("conventional_rate", 0),
+                            "poor_rate": gm.get("poor_rate", 0),
+                            "ai_detected": c.get("ai_detected", {}).get(
+                                "detected", False
+                            ),
+                        }
+                    )
             # Grade distribution
             grades = [r["quality_grade"] for r in rankings]
             grade_dist = {}
@@ -1933,8 +2149,16 @@ def _write_phase_summaries(output_dir, group_data, group_names, all_features, ph
                 "groups_count": len(group_names),
                 "group_rankings": sorted(rankings, key=lambda x: -x["quality_score"]),
                 "class_averages": {
-                    "quality_score": round(sum(r["quality_score"] for r in rankings) / max(len(rankings), 1), 1),
-                    "student_commits": round(sum(r["student_commits"] for r in rankings) / max(len(rankings), 1), 1),
+                    "quality_score": round(
+                        sum(r["quality_score"] for r in rankings)
+                        / max(len(rankings), 1),
+                        1,
+                    ),
+                    "student_commits": round(
+                        sum(r["student_commits"] for r in rankings)
+                        / max(len(rankings), 1),
+                        1,
+                    ),
                 },
                 "grade_distribution": grade_dist,
             }
@@ -1948,23 +2172,31 @@ def _write_phase_summaries(output_dir, group_data, group_names, all_features, ph
             for gname in group_names:
                 c = group_data.get(gname, {}).get("coverage")
                 if c and not c.get("error"):
-                    rankings.append({
-                        "team": gname,
-                        "short_name": shorten_team_name(gname),
-                        "line_coverage": c.get("line_coverage"),
-                        "branch_coverage": c.get("branch_coverage"),
-                    })
+                    rankings.append(
+                        {
+                            "team": gname,
+                            "short_name": shorten_team_name(gname),
+                            "line_coverage": c.get("line_coverage"),
+                            "branch_coverage": c.get("branch_coverage"),
+                        }
+                    )
             summary = {
                 "phase": "coverage",
                 "date": now,
                 "groups_count": len(group_names),
-                "group_rankings": sorted(rankings, key=lambda x: -(x.get("line_coverage") or 0)),
+                "group_rankings": sorted(
+                    rankings, key=lambda x: -(x.get("line_coverage") or 0)
+                ),
                 "class_averages": {
                     "line_coverage": round(
-                        sum(r.get("line_coverage") or 0 for r in rankings) / max(len(rankings), 1), 4
+                        sum(r.get("line_coverage") or 0 for r in rankings)
+                        / max(len(rankings), 1),
+                        4,
                     ),
                     "branch_coverage": round(
-                        sum(r.get("branch_coverage") or 0 for r in rankings) / max(len(rankings), 1), 4
+                        sum(r.get("branch_coverage") or 0 for r in rankings)
+                        / max(len(rankings), 1),
+                        4,
                     ),
                 },
             }

@@ -397,7 +397,7 @@ def _run_one_feature_test(test, jar_path, cfg):
         test["score"] = 0.0
     else:
         test["actual_result"] = output
-        test["score"] = compare_output(output, test["result"])
+        test["score"] = compare_output(output, test.get("result", ""))
 
 
 def run_feature_tests(tests, jar_path, cfg):
