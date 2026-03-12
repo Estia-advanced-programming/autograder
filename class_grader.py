@@ -1642,7 +1642,6 @@ def main():
             )
             if err:
                 return gname, "ERROR", {"error": str(err)}
-
             # Generate the JaCoCo XML report from the accumulated exec file
             mvn_result = subprocess.run(
                 ["mvn", "jacoco:report"],

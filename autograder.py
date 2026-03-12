@@ -391,7 +391,9 @@ def _build_feature_command(test, jar_path, cfg):
 def _run_one_feature_test(test, jar_path, cfg):
     """Run a single feature-mode test (thread-safe)."""
     command = _build_feature_command(test, jar_path, cfg)
-    output = run_command(command, cfg["timeout"], cfg["debug"], cwd=cfg.get("pandora_dir"))
+    output = run_command(
+        command, cfg["timeout"], cfg["debug"], cwd=cfg.get("pandora_dir")
+    )
     if output == "TIMEOUT":
         test["actual_result"] = "TIMEOUT"
         test["score"] = 0.0
@@ -437,7 +439,9 @@ def _run_one_full_group(file, option, group, jar_path, cfg):
             jacoco_path=cfg["jacoco"],
             jacoco_append=True,
         )
-    output = run_command(command, cfg["timeout"], cfg["debug"], cwd=cfg.get("pandora_dir"))
+    output = run_command(
+        command, cfg["timeout"], cfg["debug"], cwd=cfg.get("pandora_dir")
+    )
     output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
 
     for test in group:
@@ -1062,7 +1066,9 @@ def main():
         jacoco_path=jacoco_path,
         jacoco_append=False,
     )
-    pandora_version_raw = run_command(version_cmd, cfg["timeout"], cfg["debug"], cwd=pandora_dir)
+    pandora_version_raw = run_command(
+        version_cmd, cfg["timeout"], cfg["debug"], cwd=pandora_dir
+    )
     if cfg["debug"]:
         print(f"[debug] pandora --version: {pandora_version_raw}")
 

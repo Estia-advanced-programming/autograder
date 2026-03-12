@@ -470,7 +470,8 @@ confusion matrix counts and classification metrics:
 ## Commit Quality
 
 | Team | Commits | Grade | Conventional | Poor | Branch Discipline | AI Flag |
-|------|:-------:|:-----:|:------------:|:----:|:-----------------:|:-------:|"""        )
+|------|:-------:|:-----:|:------------:|:----:|:-----------------:|:-------:|"""
+        )
         rows = []
         for gname in group_names:
             c = groups[gname].get("commits")
