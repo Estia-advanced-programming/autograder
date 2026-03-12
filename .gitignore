@@ -2,3 +2,4 @@ reports/
 __pycache__/
 test/
 *.json
+reports_old/

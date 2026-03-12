@@ -1,3 +1,17 @@
+## v3.0.0 (2026-03-12)
+
+### BREAKING CHANGE
+
+- major refactoring
+
+### Feat
+
+- separate evaluation from reporting
+
+### Refactor
+
+- **grader**: separate compute from render, add commit analysis and coverage
+
 ## v2.3.0 (2026-03-11)
 
 ### Feat
