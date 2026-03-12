@@ -238,10 +238,10 @@ def _md_summary_table(group_names, groups):
     """Per-group summary table (static markdown)."""
     lines = []
     lines.append(
-        "| Team | Version | Teacher Score "
+        "| Team | Version | Teacher Score | Test Quality (F1) "
         "| Features (\U0001f7e2/\U0001f7e1/\U0001f534/\u26aa) "
         "| Tests (\U0001f7e2/\U0001f7e1/\U0001f534/\u26aa) "
-        "| Test Quality (F1) | Valid Tests | Removed |"
+        "| Valid Tests | Removed |"
     )
     lines.append(
         "|------|---------|---------------"
@@ -253,9 +253,12 @@ def _md_summary_table(group_names, groups):
         d = groups.get(gname, {})
         short_name = shorten_team_name(gname)
         version = d.get("version", "?")
-        teacher_score = d.get("teacher_evaluation", {}).get("total_score", 0)
+        teacher_score = (
+            max(0, min(1, d.get("teacher_evaluation", {}).get("teacher_score", 0)))
+            * 100
+        )
         tq = d.get("test_quality", {})
-        f1 = tq.get("f1", 0)
+        f1 = tq.get("f1", 0) * 100
         valid = tq.get("valid_tests", 0)
         total = tq.get("total_tests", 0)
         removed = tq.get("removed_tests", 0)
@@ -264,10 +267,10 @@ def _md_summary_table(group_names, groups):
         feat_cell = _fmt_tally(ft) if ft else ""
         test_cell = _fmt_tally(tt) if tt else ""
         lines.append(
-            f"| {short_name} | {version} | {teacher_score:.2f} "
+            f"| {short_name} | {version} | {teacher_score:.0f}% | {f1:.0f}% "
             f"| {feat_cell} "
             f"| {test_cell} "
-            f"| {f1:.2f} | {valid}/{total} | {removed} |"
+            f"| {valid}/{total} | {removed} |"
         )
     lines.append("")
     lines.append(": Class Summary {.primary .striped .hover .borderless .responsive}")
@@ -558,7 +561,7 @@ def _build_summary_data(group_names, groups):
             "Team": shorten_team_name(gname),
             "Version": d.get("version", "?"),
             "Teacher Score": round(
-                te.get("teacher_score", te.get("total_score", 0)), 4
+                te.get("teacher_score", te.get("teacher_score", 0)), 4
             ),
             "Avg Score": round(te.get("total_score", 0), 2),
             "F\u2705": ft.get("validated", 0),
@@ -749,8 +752,8 @@ def generate_group_report(team_name, data):
     commits = data.get("commits")
     version = data.get("version", "?")
 
-    teacher_score = te.get("teacher_score", te.get("total_score", 0))
-    tier, tier_emoji = _determine_tier(te.get("total_score", 0))
+    teacher_score = te.get("teacher_score", te.get("teacher_score", 0))
+    tier, tier_emoji = _determine_tier(te.get("teacher_score", 0))
 
     validated = [(k, v) for k, v in features.items() if v.get("status") == "validated"]
     almost = [(k, v) for k, v in features.items() if v.get("status") == "almost"]
