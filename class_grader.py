@@ -1551,6 +1551,13 @@ def main():
                 manifest_path = group_manifest(tested_path)
                 if not (os.path.isfile(jar) and os.path.isfile(manifest_path)):
                     continue
+                # Pre-populate with "always wrong" default: no test = not ground_truth
+                tested_manifest_set = set(group_manifests.get(tested_name, []))
+                for feat in all_features:
+                    if feat in tested_manifest_set:
+                        gt = ground_truth.get((tested_name, feat))
+                        if gt is not None:
+                            tester_verdicts[tester_name][(tested_name, feat)] = not gt
                 cross_jobs.append(
                     (
                         tester_name,
@@ -1590,14 +1597,17 @@ def main():
                     print(f"    [{tester_name} → {tested_name}] ERROR: {err}")
                     continue
                 cross_results[(tester_name, tested_name)] = data
+                fd = data.get("features_detail", {})
                 fs = data.get("features_score", {})
-                tested_manifest = group_manifests.get(tested_name, [])
+                tested_manifest_set = set(group_manifests.get(tested_name, []))
                 for feat in all_features:
-                    if feat in set(tested_manifest):
-                        score = fs.get(feat, 0)
-                        tester_verdicts[tester_name][(tested_name, feat)] = (
-                            score >= PASS_THRESHOLD
-                        )
+                    if feat in tested_manifest_set:
+                        # Only override the default when the tester actually ran tests
+                        if fd.get(feat, {}).get("total", 0) > 0:
+                            tester_verdicts[tester_name][(tested_name, feat)] = (
+                                fs.get(feat, 0) >= PASS_THRESHOLD
+                            )
+                        # else: keep pre-populated "always wrong" default
 
         # ── Compute metrics ──────────────────────────────────────────────
         group_metrics = {}
