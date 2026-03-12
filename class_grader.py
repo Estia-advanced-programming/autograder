@@ -1625,12 +1625,14 @@ def main():
             if not os.path.isfile(cleaned_ts):
                 return gname, "SKIP_CLEANED", None
 
-            # Run autograder with coverage enabled
+            # Run autograder with coverage enabled (runs from gpath so
+            # destfile=target/jacoco.exec lands inside the group repo)
             data, err = run_autograder(
                 jar=jar,
                 test_suite=cleaned_ts,
                 manifest=manifest_path,
                 test_dir=gpath,
+                pandora_dir=gpath,
                 coverage=True,
                 jacoco=cfg.get("jacoco"),
                 timeout=cfg["timeout"],
@@ -1640,6 +1642,21 @@ def main():
             )
             if err:
                 return gname, "ERROR", {"error": str(err)}
+
+            # Generate the JaCoCo XML report from the accumulated exec file
+            mvn_result = subprocess.run(
+                ["mvn", "jacoco:report"],
+                cwd=gpath,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=120,
+            )
+            if mvn_result.returncode != 0 and cfg.get("debug"):
+                print(
+                    f"  [{gname}] mvn jacoco:report stderr: "
+                    f"{mvn_result.stderr.decode(errors='replace').strip()}"
+                )
+
             # Parse the JaCoCo XML report
             cov = parse_jacoco_xml(gpath)
             cov["team"] = gname
@@ -1662,7 +1679,8 @@ def main():
                 line_c = cov.get("line_coverage")
                 branch_c = cov.get("branch_coverage")
                 if line_c is not None:
-                    print(f"  [{gname}] line={line_c:.2%} branch={branch_c:.2%}")
+                    branch_str = f"{branch_c:.2%}" if branch_c is not None else "n/a"
+                    print(f"  [{gname}] line={line_c:.2%} branch={branch_str}")
 
     # ── Commit analysis phase ────────────────────────────────────────
     commits_data = {}
