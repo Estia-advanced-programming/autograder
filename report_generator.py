@@ -447,8 +447,7 @@ confusion matrix counts and classification metrics:
 ## Code Coverage
 
 | Team | Line Coverage | Branch Coverage |
-|------|:------------:|:--------------:|
-"""
+|------|:------------:|:--------------:|"""
         )
         rows = []
         for gname in group_names:
@@ -461,8 +460,8 @@ confusion matrix counts and classification metrics:
         for gname, line_cov, branch_cov in rows:
             lc = f"{line_cov:.0%}" if line_cov is not None else "—"
             bc = f"{branch_cov:.0%}" if branch_cov is not None else "—"
-            parts.append(f"| {shorten_team_name(gname)} | {lc} | {bc} |\n")
-        parts.append("\n: Code Coverage {.striped .hover .borderless .responsive}\n\n")
+            parts.append(f"| {shorten_team_name(gname)} | {lc} | {bc} |")
+        parts.append("\n: Code Coverage {.striped .hover .borderless .responsive}\n")
 
     # Commit quality summary
     if has_commits:
@@ -471,9 +470,7 @@ confusion matrix counts and classification metrics:
 ## Commit Quality
 
 | Team | Commits | Grade | Conventional | Poor | Branch Discipline | AI Flag |
-|------|:-------:|:-----:|:------------:|:----:|:-----------------:|:-------:|
-"""
-        )
+|------|:-------:|:-----:|:------------:|:----:|:-----------------:|:-------:|"""        )
         rows = []
         for gname in group_names:
             c = groups[gname].get("commits")
@@ -504,9 +501,9 @@ confusion matrix counts and classification metrics:
         for gname, commits, grade, conv, poor, branch, ai in rows:
             parts.append(
                 f"| {shorten_team_name(gname)} | {commits} | {grade} "
-                f"| {conv} | {poor} | {branch} | {ai} |\n"
+                f"| {conv} | {poor} | {branch} | {ai} |"
             )
-        parts.append("\n: Commit Quality {.striped .hover .borderless .responsive}\n\n")
+        parts.append("\n: Commit Quality {.striped .hover .borderless .responsive}\n")
 
     # Class Summary (static)
     parts.append(
