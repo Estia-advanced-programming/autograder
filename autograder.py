@@ -112,12 +112,12 @@ def normalise_output(raw_bytes):
 # ─── Command execution ─────────────────────────────────────────────────────
 
 
-def run_command(command, timeout, debug):
+def run_command(command, timeout, debug, cwd=None):
     """Run *command* in a shell, return normalised stdout or 'TIMEOUT'."""
     if debug:
         print(f"[debug] {command}")
     proc = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, cwd=cwd
     )
     try:
         stdout, _ = proc.communicate(timeout=timeout)
@@ -391,7 +391,7 @@ def _build_feature_command(test, jar_path, cfg):
 def _run_one_feature_test(test, jar_path, cfg):
     """Run a single feature-mode test (thread-safe)."""
     command = _build_feature_command(test, jar_path, cfg)
-    output = run_command(command, cfg["timeout"], cfg["debug"])
+    output = run_command(command, cfg["timeout"], cfg["debug"], cwd=cfg.get("pandora_dir"))
     if output == "TIMEOUT":
         test["actual_result"] = "TIMEOUT"
         test["score"] = 0.0
@@ -437,7 +437,7 @@ def _run_one_full_group(file, option, group, jar_path, cfg):
             jacoco_path=cfg["jacoco"],
             jacoco_append=True,
         )
-    output = run_command(command, cfg["timeout"], cfg["debug"])
+    output = run_command(command, cfg["timeout"], cfg["debug"], cwd=cfg.get("pandora_dir"))
     output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
 
     for test in group:
@@ -996,6 +996,7 @@ def main():
         "timeout": args.timeout,
         "workers": args.workers,
         "test_dir": test_dir,
+        "pandora_dir": pandora_dir,
     }
 
     # ── --check mode ──────────────────────────────────────────────────
@@ -1061,7 +1062,7 @@ def main():
         jacoco_path=jacoco_path,
         jacoco_append=False,
     )
-    pandora_version_raw = run_command(version_cmd, cfg["timeout"], cfg["debug"])
+    pandora_version_raw = run_command(version_cmd, cfg["timeout"], cfg["debug"], cwd=pandora_dir)
     if cfg["debug"]:
         print(f"[debug] pandora --version: {pandora_version_raw}")
 
@@ -1074,7 +1075,7 @@ def main():
             jacoco_path=jacoco_path,
             jacoco_append=False,
         )
-        run_command(help_cmd, cfg["timeout"], cfg["debug"])
+        run_command(help_cmd, cfg["timeout"], cfg["debug"], cwd=pandora_dir)
 
     # Version comparison
     pandora_v = parse_version(pandora_version_raw)
