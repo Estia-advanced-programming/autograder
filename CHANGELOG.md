@@ -1,3 +1,18 @@
+## v3.1.0 (2026-03-13)
+
+### Feat
+
+- **converter**: convert file to imperial
+
+### Fix
+
+- count missing test as always incorrect for test quality
+- remove blank lines breaking the report tables
+- protect against non existant breach_coverage
+- run the autograder command from the student repository
+- report teacher score and not total score
+- filter missing result tests
+
 ## v3.0.0 (2026-03-12)
 
 ### BREAKING CHANGE

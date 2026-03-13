@@ -45,3 +45,11 @@ Bootstrap table classes given as attributes next to a table caption are inserted
 
 : Fruit prices {.striped .hover}
 ```
+
+
+ - add rows to the observable table. remove the non observable table. 
+ - put the teacher score and the test quality first both a percentage, then commit quality, then the rest
+ - rename the file to grade_2026.qmd. have a section to look at the groups reports
+ - the total score from the autograder should not be normalized.. it should be the raw score.
+- remove thecreation of the valid test suitem count the number of valid tests but do not create a new testSUite_cleaned
+

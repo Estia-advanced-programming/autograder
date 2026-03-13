@@ -1,5 +1,5 @@
 dir: ../2026/pandora-2026-submissions/
-tests: ./test/partialEvaluation.json
+tests: ./test/end.json
 ref: ../2026/pandora-2026-the_awesome_teachers_2026/target/pandora.jar
 output: reports
 workers: 16
