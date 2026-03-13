@@ -3,3 +3,4 @@ __pycache__/
 test/
 *.json
 reports_old/
+docs/Pandora
