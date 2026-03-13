@@ -56,6 +56,14 @@ Bootstrap table classes given as attributes next to a table caption are inserted
 - check why the mass have quotes
 - add in the autograder the capacity to select the test to run by test id, feature, metadata, option.
 
+- [ ] Correct the flight distance test 4, 5 
+- Invincible penguin : 
+    - ERROR: Manifest contains invalid features: version, help, parameter, unit, batch, debug
+    - ERROR: Test suite contains invalid features: parameters, version
+- commit number wrong for the invincible penguin, 
+- write the error correctly
+- Ethereal : Maybe issue with my cleaned test suite, I will check that.
+- mvn clean before package to be sure to have a clean build.
 
 
 ```{=html}
