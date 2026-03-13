@@ -15,7 +15,7 @@ process_repo() {
             git reset --hard -q &&
             git clean -f -d -q &&
             git pull -q &&
-            mvn -q package
+            mvn -q clean package
         ) 2>&1
     )
 
