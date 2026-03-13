@@ -247,10 +247,17 @@ def group_cleaned_test_suite(group_path):
 
 def load_manifest(group_path):
     mpath = group_manifest(group_path)
-    if not os.path.isfile(mpath):
-        return None
-    with open(mpath, "r") as f:
-        return json.load(f)
+    try:
+        if not os.path.isfile(mpath):
+            return None
+        with open(mpath, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        print(
+            f"  [!] {os.path.basename(group_path)}: failed to load manifest.json",
+            file=sys.stderr,
+        )
+        return {"version": "unknown", "features": []}
 
 
 # ─── Test suite cleaning & validation ───────────────────────────────────────
