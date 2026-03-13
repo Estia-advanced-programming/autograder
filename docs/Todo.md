@@ -48,8 +48,29 @@ Bootstrap table classes given as attributes next to a table caption are inserted
 
 
  - add rows to the observable table. remove the non observable table. 
+ - change the ```.column-screen-inset``` to ```.column-screen-inset .dense-table```
  - put the teacher score and the test quality first both a percentage, then commit quality, then the rest
  - rename the file to grade_2026.qmd. have a section to look at the groups reports
  - the total score from the autograder should not be normalized.. it should be the raw score.
 - remove thecreation of the valid test suitem count the number of valid tests but do not create a new testSUite_cleaned
+
+
+
+
+```{=html}
+<style>
+.dense-table table thead th:not(:first-child) {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    vertical-align: bottom;
+    padding: 0.2em 0.5em;
+    min-height: 150px;
+    white-space: nowrap;
+}
+.dense-table table thead th:first-child {
+    writing-mode: horizontal-tb;
+    text-align: left;
+}
+</style>
+```
 

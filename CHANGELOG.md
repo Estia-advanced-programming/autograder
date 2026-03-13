@@ -1,3 +1,10 @@
+## v3.1.1 (2026-03-13)
+
+### Fix
+
+- forcing encoding utf-8 for python autograder (#5)
+- **autograder**: escape metadata value on the cli
+
 ## v3.1.0 (2026-03-13)
 
 ### Feat
