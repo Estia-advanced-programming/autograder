@@ -51,9 +51,10 @@ Bootstrap table classes given as attributes next to a table caption are inserted
  - change the ```.column-screen-inset``` to ```.column-screen-inset .dense-table```
  - put the teacher score and the test quality first both a percentage, then commit quality, then the rest
  - rename the file to grade_2026.qmd. have a section to look at the groups reports
- - the total score from the autograder should not be normalized.. it should be the raw score.
+ - [x] the total score from the autograder should not be normalized.. it should be the raw score.
 - remove thecreation of the valid test suitem count the number of valid tests but do not create a new testSUite_cleaned
-
+- check why the mass have quotes
+- add in the autograder the capacity to select the test to run by test id, feature, metadata, option.
 
 
 

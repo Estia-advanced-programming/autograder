@@ -1,3 +1,10 @@
+## v3.1.2 (2026-03-13)
+
+### Fix
+
+- skip tests where file is an array instead of a single file
+- handle "options" in addition to "option" in testSuite
+
 ## v3.1.1 (2026-03-13)
 
 ### Fix
