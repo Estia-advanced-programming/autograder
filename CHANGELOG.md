@@ -1,3 +1,66 @@
+## v3.1.0 (2026-03-13)
+
+### Feat
+
+- **converter**: convert file to imperial
+
+### Fix
+
+- count missing test as always incorrect for test quality
+- remove blank lines breaking the report tables
+- protect against non existant breach_coverage
+- run the autograder command from the student repository
+- report teacher score and not total score
+- filter missing result tests
+
+## v3.0.0 (2026-03-12)
+
+### BREAKING CHANGE
+
+- major refactoring
+
+### Feat
+
+- separate evaluation from reporting
+
+### Refactor
+
+- **grader**: separate compute from render, add commit analysis and coverage
+
+## v2.3.0 (2026-03-11)
+
+### Feat
+
+- **classGrader**: improve table readibily
+- **updateGroups**: pull and compile student code from the cli
+- parallelize test execution, improve report readability
+
+## v2.2.0 (2026-03-10)
+
+### Feat
+
+- **classGrader**: put different evaluation phase behind flags
+- **classGrader**: tally feature and tests
+- **autograder**: tally validated tests
+- **autograder**: tally validated feature
+- **testManager**: handle group at the root level
+- **testsManager**: add integration test samples and fix entry-level mode override (Phase 7)
+- **testsManager**: add file-reference and duplicate checks (Phase 6)
+- **testsManager**: add list command (Phase 5)
+- **testsManager**: add build command with ID allocation (Phase 4)
+- **testsManager**: add profile resolution (Phase 3)
+- **testsManager**: add expansion engine (Phase 2)
+- **testManager**: add yaml loading and validation
+- **testManager**: add scafolding for the testManager (CLI, file opening)
+- **autograder**: add a group option to tests in the testSuite
+- **classGrader**: add a dry run option to the class grader
+- **classGrader**: read options from config.yml
+
+### Fix
+
+- update teacher testsuite to the local one
+- **autograder**: check pandora version in lower case
+
 ## v2.1.1 (2026-03-06)
 
 ### Fix

@@ -12,6 +12,7 @@ See --help for full option list.
 """
 
 import argparse
+import concurrent.futures
 import json
 import math
 import os
@@ -111,12 +112,12 @@ def normalise_output(raw_bytes):
 # ─── Command execution ─────────────────────────────────────────────────────
 
 
-def run_command(command, timeout, debug):
+def run_command(command, timeout, debug, cwd=None):
     """Run *command* in a shell, return normalised stdout or 'TIMEOUT'."""
     if debug:
         print(f"[debug] {command}")
     proc = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, cwd=cwd
     )
     try:
         stdout, _ = proc.communicate(timeout=timeout)
@@ -179,7 +180,13 @@ def format_version(version_tuple):
 
 
 def test_category(test):
-    """Return the manifest key that must be present for this test to run."""
+    """Return the manifest key that must be present for this test to run.
+
+    If 'group' is set, it overrides the default category — the manifest must
+    list the group value (e.g. 'imperial') for the test to be included.
+    """
+    if test.get("group"):
+        return test["group"]
     if test.get("metadata"):
         return "metadata"
     if test.get("parameter"):
@@ -188,7 +195,13 @@ def test_category(test):
 
 
 def test_aggregation_key(test):
-    """Return the key under which this test's score is aggregated in feature scores."""
+    """Return the key under which this test's score is aggregated in feature scores.
+
+    If 'group' is set, all tests sharing the same group are aggregated together
+    under that group name instead of their individual feature/metadata/parameter.
+    """
+    if test.get("group"):
+        return test["group"]
     if test.get("metadata"):
         return "metadata"
     if test.get("parameter"):
@@ -198,11 +211,16 @@ def test_aggregation_key(test):
 
 def test_display_name(test):
     """Human-readable label for the test target."""
+    base = None
     if test.get("metadata"):
-        return f"metadata:{test['metadata']}"
-    if test.get("parameter"):
-        return test["parameter"]
-    return test.get("feature", "?")
+        base = f"metadata:{test['metadata']}"
+    elif test.get("parameter"):
+        base = test["parameter"]
+    else:
+        base = test.get("feature", "?")
+    if test.get("group"):
+        return f"{test['group']}:{base}"
+    return base
 
 
 # ─── Filtering ──────────────────────────────────────────────────────────────
@@ -370,17 +388,81 @@ def _build_feature_command(test, jar_path, cfg):
     )
 
 
+def _run_one_feature_test(test, jar_path, cfg):
+    """Run a single feature-mode test (thread-safe)."""
+    command = _build_feature_command(test, jar_path, cfg)
+    output = run_command(
+        command, cfg["timeout"], cfg["debug"], cwd=cfg.get("pandora_dir")
+    )
+    if output == "TIMEOUT":
+        test["actual_result"] = "TIMEOUT"
+        test["score"] = 0.0
+    else:
+        test["actual_result"] = output
+        test["score"] = compare_output(output, test.get("result", ""))
+
+
 def run_feature_tests(tests, jar_path, cfg):
-    """Execute each feature-mode test individually."""
-    for test in tests:
-        command = _build_feature_command(test, jar_path, cfg)
-        output = run_command(command, cfg["timeout"], cfg["debug"])
+    """Execute each feature-mode test individually, optionally in parallel."""
+    workers = cfg.get("workers", 1)
+    if workers > 1 and len(tests) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(_run_one_feature_test, t, jar_path, cfg) for t in tests
+            ]
+            concurrent.futures.wait(futures)
+    else:
+        for test in tests:
+            _run_one_feature_test(test, jar_path, cfg)
+
+
+def _run_one_full_group(file, option, group, jar_path, cfg):
+    """Run one full-mode group of tests (thread-safe)."""
+    options = option.split() if option else None
+    if isinstance(file, tuple):
+        file_paths = [resolve_path(f, cfg.get("test_dir")) for f in file]
+        command = build_java_command(
+            jar_path,
+            files=file_paths,
+            options=options,
+            coverage=cfg["coverage"],
+            jacoco_path=cfg["jacoco"],
+            jacoco_append=True,
+        )
+    else:
+        file_path = resolve_path(file, cfg.get("test_dir"))
+        command = build_java_command(
+            jar_path,
+            file=file_path,
+            options=options,
+            coverage=cfg["coverage"],
+            jacoco_path=cfg["jacoco"],
+            jacoco_append=True,
+        )
+    output = run_command(
+        command, cfg["timeout"], cfg["debug"], cwd=cfg.get("pandora_dir")
+    )
+    output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
+
+    for test in group:
         if output == "TIMEOUT":
             test["actual_result"] = "TIMEOUT"
             test["score"] = 0.0
             continue
-        test["actual_result"] = output
-        test["score"] = compare_output(output, test["result"])
+
+        lookup_key = (
+            test.get("feature") or test.get("metadata") or test.get("parameter", "")
+        )
+        test["actual_result"] = f"key {lookup_key}: not found"
+        test["score"] = 0.0
+
+        for line in output_lines:
+            k, _, v = line.partition(":")
+            if k.strip() == lookup_key:
+                actual = v.strip()
+                test["actual_result"] = actual
+                test["score"] = compare_output(actual, test["result"])
+                break
 
 
 def run_full_tests(tests, jar_path, cfg):
@@ -393,50 +475,17 @@ def run_full_tests(tests, jar_path, cfg):
             key = (test["file"], test.get("option", ""))
         groups.setdefault(key, []).append(test)
 
-    for (file, option), group in groups.items():
-        options = option.split() if option else None
-        if isinstance(file, tuple):
-            file_paths = [resolve_path(f, cfg.get("test_dir")) for f in file]
-            command = build_java_command(
-                jar_path,
-                files=file_paths,
-                options=options,
-                coverage=cfg["coverage"],
-                jacoco_path=cfg["jacoco"],
-                jacoco_append=True,
-            )
-        else:
-            file_path = resolve_path(file, cfg.get("test_dir"))
-            command = build_java_command(
-                jar_path,
-                file=file_path,
-                options=options,
-                coverage=cfg["coverage"],
-                jacoco_path=cfg["jacoco"],
-                jacoco_append=True,
-            )
-        output = run_command(command, cfg["timeout"], cfg["debug"])
-        output_lines = output.split(os.linesep) if output != "TIMEOUT" else []
-
-        for test in group:
-            if output == "TIMEOUT":
-                test["actual_result"] = "TIMEOUT"
-                test["score"] = 0.0
-                continue
-
-            lookup_key = (
-                test.get("feature") or test.get("metadata") or test.get("parameter", "")
-            )
-            test["actual_result"] = f"key {lookup_key}: not found"
-            test["score"] = 0.0
-
-            for line in output_lines:
-                k, _, v = line.partition(":")
-                if k.strip() == lookup_key:
-                    actual = v.strip()
-                    test["actual_result"] = actual
-                    test["score"] = compare_output(actual, test["result"])
-                    break
+    workers = cfg.get("workers", 1)
+    if workers > 1 and len(groups) > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(_run_one_full_group, file, option, group, jar_path, cfg)
+                for (file, option), group in groups.items()
+            ]
+            concurrent.futures.wait(futures)
+    else:
+        for (file, option), group in groups.items():
+            _run_one_full_group(file, option, group, jar_path, cfg)
 
 
 # ─── Score aggregation ──────────────────────────────────────────────────────
@@ -475,27 +524,177 @@ def group_by_milestone(tests):
 # ─── Pass badge ─────────────────────────────────────────────────────────────
 
 
+PASS_THRESHOLD = 0.9
+PARTIAL_THRESHOLD = 0.5
+
+
 def badge(score):
-    if score >= 0.9:
+    if score >= PASS_THRESHOLD:
         return "🟢"
-    if score >= 0.8:
+    if score >= PARTIAL_THRESHOLD:
         return "🟡"
     return "🔴"
+
+
+def tally_features(feature_scores, tests, all_tests, implemented_features):
+    """Count features by validation status.
+
+    Returns dict with keys: validated, almost, missed, not_implemented, total.
+    A feature is 'not_implemented' when every test returned 'not found'.
+    Features filtered out by the manifest also count as not_implemented.
+    TIMEOUT counts as missed.
+    """
+    # Group run tests by aggregation key
+    buckets = {}
+    for t in tests:
+        key = test_aggregation_key(t)
+        buckets.setdefault(key, []).append(t)
+
+    validated = almost = missed = not_implemented = 0
+    for key, score in feature_scores.items():
+        key_tests = buckets.get(key, [])
+        all_not_found = all(
+            "not found" in str(t.get("actual_result", "")) for t in key_tests
+        )
+        if all_not_found and key_tests:
+            not_implemented += 1
+        elif score >= PASS_THRESHOLD:
+            validated += 1
+        elif score >= PARTIAL_THRESHOLD:
+            almost += 1
+        else:
+            missed += 1
+
+    # Count features filtered out by the manifest
+    features_set = set(implemented_features)
+    filtered_out_keys = set()
+    for t in all_tests:
+        cat = test_category(t)
+        if cat not in features_set:
+            filtered_out_keys.add(test_aggregation_key(t))
+    not_implemented += len(filtered_out_keys)
+
+    return {
+        "validated": validated,
+        "almost": almost,
+        "missed": missed,
+        "not_implemented": not_implemented,
+        "total": len(feature_scores) + len(filtered_out_keys),
+    }
+
+
+def tally_tests(tests, all_tests, implemented_features):
+    """Count individual tests by validation status.
+
+    Returns dict with keys: validated, almost, missed, not_implemented, total.
+    Tests filtered out by the manifest count as not_implemented.
+    """
+    validated = almost = missed = not_implemented = 0
+    for t in tests:
+        actual = str(t.get("actual_result", ""))
+        if "not found" in actual:
+            not_implemented += 1
+        elif t["score"] >= PASS_THRESHOLD:
+            validated += 1
+        elif t["score"] >= PARTIAL_THRESHOLD:
+            almost += 1
+        else:
+            missed += 1
+
+    # Count tests filtered out by the manifest
+    features_set = set(implemented_features)
+    filtered_out = sum(1 for t in all_tests if test_category(t) not in features_set)
+    not_implemented += filtered_out
+
+    return {
+        "validated": validated,
+        "almost": almost,
+        "missed": missed,
+        "not_implemented": not_implemented,
+        "total": len(tests) + filtered_out,
+    }
+
+
+def compute_feature_details(feature_scores, tests):
+    """Per-feature detail: score, valid test count, total test count, status.
+
+    Returns {feature: {"score": float, "valid": int, "total": int, "status": str}}
+    """
+    buckets = {}
+    for t in tests:
+        key = test_aggregation_key(t)
+        buckets.setdefault(key, []).append(t)
+
+    details = {}
+    for key, score in feature_scores.items():
+        key_tests = buckets.get(key, [])
+        total = len(key_tests)
+        valid = sum(1 for t in key_tests if t["score"] >= PASS_THRESHOLD)
+        all_not_found = all(
+            "not found" in str(t.get("actual_result", "")) for t in key_tests
+        )
+        if all_not_found and key_tests:
+            status = "not_implemented"
+        elif score >= PASS_THRESHOLD:
+            status = "validated"
+        elif score >= PARTIAL_THRESHOLD:
+            status = "almost"
+        else:
+            status = "missed"
+        details[key] = {
+            "score": score,
+            "valid": valid,
+            "total": total,
+            "status": status,
+        }
+    return details
 
 
 # ─── Report generators ─────────────────────────────────────────────────────
 
 
-def report_summary(feature_scores):
+def _tally_line(tally, label):
+    return (
+        f"{label}: "
+        f"🟢 {tally['validated']} validated  "
+        f"🟡 {tally['almost']} almost  "
+        f"🔴 {tally['missed']} missed  "
+        f"⚪ {tally['not_implemented']} not implemented  "
+        f"(total: {tally['total']})"
+    )
+
+
+def report_summary(feature_scores, tally, test_tally):
     """One line per feature with badge."""
     lines = []
     max_len = max((len(k) for k in feature_scores), default=0)
     for feat, score in feature_scores.items():
         lines.append(f"{feat:<{max_len}}  {badge(score)}")
+    lines.append("")
+    lines.append(_tally_line(tally, "Features"))
+    lines.append(_tally_line(test_tally, "Tests"))
     return "\n".join(lines)
 
 
-def report_markdown(feature_scores, tests, milestone_scores, total_score, version_info):
+def _tally_md(tally):
+    return (
+        f"🟢 {tally['validated']} validated · "
+        f"🟡 {tally['almost']} almost · "
+        f"🔴 {tally['missed']} missed · "
+        f"⚪ {tally['not_implemented']} not implemented · "
+        f"**{tally['total']}** total"
+    )
+
+
+def report_markdown(
+    feature_scores,
+    tests,
+    milestone_scores,
+    total_score,
+    version_info,
+    tally,
+    test_tally,
+):
     """Full Markdown report."""
     lines = []
     # Version
@@ -508,6 +707,12 @@ def report_markdown(feature_scores, tests, milestone_scores, total_score, versio
 
     # Total
     lines.append(f"**Total Score**: {total_score:.2f}")
+    lines.append("")
+
+    # Tallies
+    lines.append(f"**Features**: {_tally_md(tally)}")
+    lines.append("")
+    lines.append(f"**Tests**: {_tally_md(test_tally)}")
     lines.append("")
 
     # Feature scores
@@ -555,6 +760,10 @@ def report_json(
     implemented_features,
     version_info,
     elapsed,
+    tally,
+    test_tally,
+    feature_details,
+    test_suite_metadata=None,
 ):
     """Build the JSON output dict."""
     data = {
@@ -563,10 +772,14 @@ def report_json(
             "pandora": version_info["pandora"],
             "manifest": version_info["manifest"],
         },
+        "test_suite_metadata": test_suite_metadata,
         "milestone_scores": milestone_scores,
         "total_score": total_score,
+        "tally": tally,
+        "test_tally": test_tally,
         "features": implemented_features,
         "features_score": feature_scores,
+        "features_detail": feature_details,
         "tests_by_milestone": group_by_milestone(tests),
         "time": elapsed,
     }
@@ -609,10 +822,21 @@ def check_inputs(test_suite_path, manifest_path, jar_path, test_dir=None):
     # Test suite
     try:
         with open(test_suite_path, "r") as f:
-            tests = json.load(f)
-        if not isinstance(tests, list):
-            errors.append("Test suite must be a JSON array.")
+            raw = json.load(f)
+        # Support dict-with-metadata or plain array format
+        if isinstance(raw, dict):
+            tests = raw.get("tests", [])
+        elif isinstance(raw, list):
+            tests = raw
         else:
+            tests = None
+            errors.append(
+                "Test suite must be a JSON array or an object with a 'tests' key."
+            )
+        if tests is not None and not isinstance(tests, list):
+            errors.append("Test suite 'tests' value must be a JSON array.")
+            tests = None
+        if tests is not None:
             # Collect invalid features from test suite
             invalid_test_features = set()
 
@@ -735,6 +959,13 @@ def build_parser():
         help="Per-command timeout in seconds (default: 10)",
     )
     p.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel test workers (default: 1)",
+    )
+    p.add_argument(
         "--check", action="store_true", help="Validate inputs without running tests"
     )
 
@@ -767,7 +998,9 @@ def main():
         "jacoco": jacoco_path,
         "debug": args.debug,
         "timeout": args.timeout,
+        "workers": args.workers,
         "test_dir": test_dir,
+        "pandora_dir": pandora_dir,
     }
 
     # ── --check mode ──────────────────────────────────────────────────
@@ -783,7 +1016,7 @@ def main():
     # ── Load inputs ───────────────────────────────────────────────────
     try:
         with open(test_suite_path, "r") as f:
-            test_suite = json.load(f)
+            raw_suite = json.load(f)
     except FileNotFoundError:
         print(f"ERROR: Test suite file not found: {test_suite_path}")
         sys.exit(1)
@@ -791,6 +1024,14 @@ def main():
         print(f"ERROR: Test suite is not valid JSON: {e}")
         print(f"       File: {test_suite_path}")
         sys.exit(1)
+
+    # Support dict-with-metadata or plain array format
+    if isinstance(raw_suite, dict):
+        test_suite_metadata = raw_suite.get("metadata")
+        test_suite = raw_suite.get("tests", [])
+    else:
+        test_suite_metadata = None
+        test_suite = raw_suite
 
     try:
         with open(manifest_path, "r") as f:
@@ -825,7 +1066,9 @@ def main():
         jacoco_path=jacoco_path,
         jacoco_append=False,
     )
-    pandora_version_raw = run_command(version_cmd, cfg["timeout"], cfg["debug"])
+    pandora_version_raw = run_command(
+        version_cmd, cfg["timeout"], cfg["debug"], cwd=pandora_dir
+    )
     if cfg["debug"]:
         print(f"[debug] pandora --version: {pandora_version_raw}")
 
@@ -838,7 +1081,7 @@ def main():
             jacoco_path=jacoco_path,
             jacoco_append=False,
         )
-        run_command(help_cmd, cfg["timeout"], cfg["debug"])
+        run_command(help_cmd, cfg["timeout"], cfg["debug"], cwd=pandora_dir)
 
     # Version comparison
     pandora_v = parse_version(pandora_version_raw)
@@ -872,6 +1115,9 @@ def main():
     feature_scores = aggregate_feature_scores(filtered, implemented_features)
     milestone_scores = aggregate_milestone_scores(filtered)
     total_score = average_score(filtered)
+    feature_details = compute_feature_details(feature_scores, filtered)
+    tally = tally_features(feature_scores, filtered, test_suite, implemented_features)
+    test_tally = tally_tests(filtered, test_suite, implemented_features)
 
     # ── Determine output mode ─────────────────────────────────────────
     fmt = args.format
@@ -884,7 +1130,7 @@ def main():
 
     # ── Generate output ───────────────────────────────────────────────
     if fmt == "summary":
-        output_text = report_summary(feature_scores)
+        output_text = report_summary(feature_scores, tally, test_tally)
     elif fmt == "json":
         data = report_json(
             feature_scores,
@@ -894,11 +1140,21 @@ def main():
             implemented_features,
             version_info,
             elapsed,
+            tally,
+            test_tally,
+            feature_details,
+            test_suite_metadata,
         )
         output_text = json.dumps(data, indent=2, default=str)
     else:
         output_text = report_markdown(
-            feature_scores, filtered, milestone_scores, total_score, version_info
+            feature_scores,
+            filtered,
+            milestone_scores,
+            total_score,
+            version_info,
+            tally,
+            test_tally,
         )
 
     # ── Write or print ────────────────────────────────────────────────

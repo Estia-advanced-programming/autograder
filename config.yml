@@ -1,0 +1,27 @@
+dir: ../2026/pandora-2026-submissions/
+tests: ./test/end.json
+ref: ../2026/pandora-2026-the_awesome_teachers_2026/target/pandora.jar
+output: reports
+workers: 16
+workers_per_group: 8
+phases:
+  teacher_evaluation: true
+  validation: true
+  self_evaluation: true
+  cross_testing: true
+  coverage: true
+  commits: true
+scoring:
+  test_point: 1
+  feature_point: 100
+  feature_penalty: -10
+commits:
+  teacher_email: dhmmasson
+  template_hashes:
+    - 3008cff
+    - 7dda566
+    - 40dc1ea
+    - 2aa670a
+    - 06f979c
+    - 6506964
+    - 99e6997
