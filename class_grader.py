@@ -1594,9 +1594,14 @@ def main():
             max_workers=concurrent_groups
         ) as pool:
             futures = [pool.submit(_cross_test_one, *job) for job in cross_jobs]
+            i = 0
+            increment = max(1, len(futures) // 50)
             for future in concurrent.futures.as_completed(futures):
                 tester_name, tested_name, data, err = future.result()
                 if data is None and err is None:
+                    i += 1
+                    if i % increment == 0:
+                        print(".", end="", flush=True)
                     continue
                 if err:
                     print(f"    [{tester_name} → {tested_name}] ERROR: {err}")
