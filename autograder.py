@@ -908,7 +908,7 @@ def main():
         if "." not in os.path.basename(out_path):
             ext = ".json" if fmt == "json" else ".md"
             out_path += ext
-        with open(out_path, "w") as f:
+        with open(out_path, "w", encoding="utf-8") as f:
             f.write(output_text)
     else:
         print(output_text)
