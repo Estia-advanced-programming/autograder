@@ -1,5 +1,6 @@
 {
   "features": [
+    "ERROR",
     "number",
     "metadata",
     "metric",
