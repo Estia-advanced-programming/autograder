@@ -299,13 +299,18 @@ def clean_test_suite(group_name, group_path):
     for test in original_tests:
         # Check for missing file
         test_file = test.get("file", "")
-        if test_file:
+        if test_file and isinstance(test_file, str):
             resolved = (
                 os.path.join(group_path, test_file)
                 if not os.path.isabs(test_file)
                 else test_file
             )
             if not os.path.isfile(resolved):
+                removed.append(test)
+                continue
+        else:
+            # If "file" is present but not a string, consider it invalid
+            if "file" in test:
                 removed.append(test)
                 continue
 
