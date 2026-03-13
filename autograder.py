@@ -309,6 +309,8 @@ def validate_test_features(tests, warn=True):
             ):
                 invalid.append(meta)
                 seen.add(meta)
+        if "options" in test and test["options"]:
+            test["option"] = test.pop("options").join(" ")
 
     if invalid and warn:
         print(
