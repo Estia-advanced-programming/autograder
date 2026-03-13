@@ -364,7 +364,7 @@ def _build_feature_command(test, jar_path, cfg):
     if test.get("feature") and not test.get("metadata") and not test.get("parameter"):
         options += ["-o", test["feature"]]
     if test.get("metadata"):
-        options += ["-m", test["metadata"]]
+        options += ["-m", '"' + test["metadata"] + '"']
     if test.get("option"):
         options += test["option"].split()
     if "files" in test:
